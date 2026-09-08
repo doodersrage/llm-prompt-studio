@@ -2,7 +2,7 @@ import { sharedLlmRequestBody } from './llm-request-options';
 import type { SharedToolSettings } from './settings-cache';
 import { prepareVisionScanImagePayload } from './vision-scan-still';
 import { resolveLocalImageFile } from './vision-still-scan-client';
-import type { ComposeTransferRecipe } from './compose-transfer-scan';
+import type { ComposeTransferRecipe } from './compose-transfer-scan-shared';
 
 export type ComposeTransferScanSlot = {
   index: number;

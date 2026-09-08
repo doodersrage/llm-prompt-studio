@@ -65,7 +65,7 @@ import { scanComposeTransferWithVision } from '@/lib/compose-transfer-scan-clien
 import {
   normalizeComposeTransferRecipe,
   type ComposeTransferRecipe,
-} from '@/lib/compose-transfer-scan';
+} from '@/lib/compose-transfer-scan-shared';
 
 export function useComposeToolOrchestrationCore() {
   const { mounted, shared, toolSettings, updateShared, updateToolSettings } = useCachedSettings(

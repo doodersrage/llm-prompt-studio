@@ -6,7 +6,7 @@ import { FieldLabel } from '@/components/ui/Field';
 import { ChipButton } from '@/components/ui/Field';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import type { useComposeToolOrchestration } from '@/hooks/useComposeToolOrchestration';
-import type { ComposeTransferRecipe } from '@/lib/compose-transfer-scan';
+import type { ComposeTransferRecipe } from '@/lib/compose-transfer-scan-shared';
 
 type ComposeSlot = ReturnType<typeof useComposeToolOrchestration>['slots'][number];
 

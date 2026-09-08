@@ -5,7 +5,7 @@ import {
   fallbackComposeTransferInstruction,
   normalizeComposeTransferRecipe,
   parseComposeTransferInstruction,
-} from './compose-transfer-scan';
+} from './compose-transfer-scan-shared';
 
 describe('compose-transfer-scan helpers', () => {
   it('normalizes recipes and roles', () => {

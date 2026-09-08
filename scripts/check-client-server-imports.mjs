@@ -31,6 +31,7 @@ const FORBIDDEN = [
   /from\s+['"]@\/lib\/auth\/password['"]/,
   /from\s+['"]@\/lib\/auth\/session['"]/,
   /from\s+['"]@\/lib\/auth\/store['"]/,
+  /from\s+['"](?:@\/lib\/|\.\.?\/)compose-transfer-scan['"]/,
 ];
 
 /** Value imports of history-workflow (type-only is OK). */
