@@ -166,6 +166,9 @@ export function ComposeToolFormSection(props: ReturnType<typeof useComposeToolOr
         isolateStatus={rest.isolateStatus}
         assignFigure={rest.assignFigure}
         scanWithVision={rest.scanWithVision}
+        scanTransferWithVision={rest.scanTransferWithVision}
+        transferScanRecipe={rest.transferScanRecipe}
+        setTransferScanRecipe={rest.setTransferScanRecipe}
       />
       <ComposeToolIdentityMaskSection
         shared={shared}

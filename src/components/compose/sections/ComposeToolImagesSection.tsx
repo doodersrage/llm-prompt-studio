@@ -4,19 +4,41 @@ import VisionScanButton from '@/components/VisionScanButton';
 import { galleryPickPath } from '@/lib/gallery-handoff';
 import { FieldLabel } from '@/components/ui/Field';
 import { ChipButton } from '@/components/ui/Field';
-import { ButtonLink } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import type { useComposeToolOrchestration } from '@/hooks/useComposeToolOrchestration';
+import type { ComposeTransferRecipe } from '@/lib/compose-transfer-scan';
 
 type ComposeSlot = ReturnType<typeof useComposeToolOrchestration>['slots'][number];
 
 type Props = Pick<
   ReturnType<typeof useComposeToolOrchestration>,
-  'mode' | 'toolSettings' | 'updateToolSettings' | 'isolating' | 'scanning' | 'isolateStatus'
+  | 'mode'
+  | 'toolSettings'
+  | 'updateToolSettings'
+  | 'isolating'
+  | 'scanning'
+  | 'isolateStatus'
+  | 'transferScanRecipe'
+  | 'setTransferScanRecipe'
+  | 'scanTransferWithVision'
 > & {
   slots: ComposeSlot[];
   assignFigure: ReturnType<typeof useComposeToolOrchestration>['assignFigure'];
   scanWithVision: () => void | Promise<void>;
 };
+
+const RECIPE_OPTIONS: Array<{ id: ComposeTransferRecipe; label: string; title: string }> = [
+  {
+    id: 'pose-from-1-people-from-rest',
+    label: 'Pose ← 1 · People ← 2+',
+    title: 'Pose and framing from Image 1; persons / identity from Images 2–4',
+  },
+  {
+    id: 'people-from-1-pose-from-2',
+    label: 'People ← 1 · Pose ← 2',
+    title: 'Persons from Image 1; pose and body energy from Image 2',
+  },
+];
 
 export function ComposeToolImagesSection({
   mode,
@@ -28,10 +50,16 @@ export function ComposeToolImagesSection({
   isolateStatus,
   assignFigure,
   scanWithVision,
+  scanTransferWithVision,
+  transferScanRecipe,
+  setTransferScanRecipe,
 }: Props) {
+  const filledDonorCount = slots.slice(1).filter(slot => slot.file || slot.previewUrl).length;
+  const canTransferScan = Boolean(slots[0]?.file || slots[0]?.previewUrl) && filledDonorCount > 0;
+
   return (
     <>
-      <FieldLabel hint="Image 1 is the base canvas. Isolate on white cuts Image 1 so the original background cannot leak. Images 2–4 stay intact as pose and scene donors.">
+      <FieldLabel hint="Image 1 is the base canvas. Isolate on white cuts Image 1 so the original background cannot leak. Images 2–4 stay intact as pose and scene donors. Transfer scan vision-reads every filled slot and writes a transfer instruction.">
         Images
       </FieldLabel>
       <div className="flex flex-wrap items-center gap-2">
@@ -153,6 +181,45 @@ export function ComposeToolImagesSection({
             </div>
           );
         })}
+      </div>
+
+      <div
+        className="mt-3 space-y-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-muted)]/30 p-3"
+        data-testid="compose-transfer-scan"
+      >
+        <p className="text-sm font-medium text-[var(--text-primary)]">Transfer scan</p>
+        <p className="type-caption text-[var(--text-muted)]">
+          Vision-reads every filled slot, then writes a transfer instruction into the prompt box.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {RECIPE_OPTIONS.map(option => (
+            <ChipButton
+              key={option.id}
+              active={transferScanRecipe === option.id}
+              disabled={scanning}
+              title={option.title}
+              onClick={() => setTransferScanRecipe(option.id)}
+            >
+              {option.label}
+            </ChipButton>
+          ))}
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!canTransferScan || scanning}
+          loading={scanning}
+          loadingLabel="Scanning images"
+          data-testid="compose-transfer-scan-button"
+          onClick={() => void scanTransferWithVision()}
+        >
+          Scan all images → instruction
+        </Button>
+        {!canTransferScan ? (
+          <p className="type-caption text-[var(--text-muted)]">
+            Need Image 1 plus at least one of Images 2–4.
+          </p>
+        ) : null}
       </div>
     </>
   );

@@ -61,6 +61,11 @@ import {
   type FigureSlot,
 } from '@/lib/compose-figure-slot';
 import { resolveLocalImageFile, scanStillWithVision } from '@/lib/vision-still-scan-client';
+import { scanComposeTransferWithVision } from '@/lib/compose-transfer-scan-client';
+import {
+  normalizeComposeTransferRecipe,
+  type ComposeTransferRecipe,
+} from '@/lib/compose-transfer-scan';
 
 export function useComposeToolOrchestrationCore() {
   const { mounted, shared, toolSettings, updateShared, updateToolSettings } = useCachedSettings(
@@ -131,6 +136,49 @@ export function useComposeToolOrchestrationCore() {
     },
     [updateToolSettings]
   );
+
+  const transferScanRecipe = normalizeComposeTransferRecipe(toolSettings.transferScanRecipe);
+
+  const setTransferScanRecipe = useCallback(
+    (recipe: ComposeTransferRecipe) => {
+      updateToolSettings({ transferScanRecipe: recipe });
+    },
+    [updateToolSettings]
+  );
+
+  const scanTransferWithVision = useCallback(async () => {
+    const filled = slots
+      .map((slot, index) => ({ slot, index: index + 1 }))
+      .filter(({ slot }) => slot.file || slot.previewUrl);
+    if (filled.length < 2) {
+      setError('Add Image 1 and at least one donor (Image 2–4) for a transfer scan.');
+      return;
+    }
+    setScanning(true);
+    setError(null);
+    try {
+      if (mode !== 'transfer') {
+        setMode('transfer');
+      }
+      const prompt = await scanComposeTransferWithVision({
+        slots: filled.map(({ slot, index }) => ({
+          index,
+          file: slot.file,
+          previewUrl: slot.previewUrl,
+        })),
+        recipe: transferScanRecipe,
+        model: shared.model,
+        detail: shared.detail,
+        extraHints: instruction.trim() || undefined,
+        shared,
+      });
+      setInstruction(prompt);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Transfer scan failed.');
+    } finally {
+      setScanning(false);
+    }
+  }, [instruction, mode, setInstruction, setMode, shared, slots, transferScanRecipe]);
 
   useSeedToolDraft(mounted, {
     toolKey: 'compose',
@@ -470,6 +518,9 @@ export function useComposeToolOrchestrationCore() {
     setMode,
     isolateSubject,
     scanWithVision,
+    scanTransferWithVision,
+    transferScanRecipe,
+    setTransferScanRecipe,
     actions,
     selectedModel,
     filledCount,

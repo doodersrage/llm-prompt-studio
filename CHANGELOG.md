@@ -9,6 +9,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Compose: multi-image Transfer scan — vision-reads filled slots and writes a transfer instruction (pose from Image 1 + people from 2+, or people from Image 1 + pose from Image 2).
+
 ## [v1.6.0] - 2026-09-06
 
 - Desktop: Arch-safe `.deb` install script (`desktop/scripts/install-from-deb.sh`); first launch auto-runs Heal & ready (`?heal=1`).

@@ -738,6 +738,11 @@ export type ImageComposeToolCache = {
   /** Last figure-slot count hint (1–4). */
   figureCountHint?: number;
   /**
+   * Multi-image vision transfer scan recipe.
+   * Default: pose from Image 1, people from Image 2+.
+   */
+  transferScanRecipe?: 'pose-from-1-people-from-rest' | 'people-from-1-pose-from-2';
+  /**
    * Cut Image 1 onto a white plate before queueing so edit models cannot lock
    * onto the original background. Default on; Images 2–4 are left intact.
    */
@@ -1244,6 +1249,7 @@ export const DEFAULT_IMAGE_COMPOSE_TOOL_CACHE: ImageComposeToolCache = {
   instruction: '',
   mode: 'transfer',
   figureCountHint: 2,
+  transferScanRecipe: 'pose-from-1-people-from-rest',
   isolateSubject: true,
   identityLock: false,
   identityLockStrength: 0.5,

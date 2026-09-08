@@ -30,6 +30,7 @@ curl -sS "http://localhost:47832/api/models?id=sdxl" | jq .
 | `/api/roleplay`     | POST   | Roleplay bio, scene beats, or still prompt (`action`: bio / scenes / prompt) |
 | `/api/background`   | POST   | People-free environment prompt                                               |
 | `/api/image-prompt` | POST   | Image upload/base64 → prompt (vision LLM)                                    |
+| `/api/compose/transfer-scan` | POST | Multi-image vision → Compose transfer instruction (pose/people recipes) |
 
 Errors use a consistent shape: `{ "error": "message" }` with an appropriate HTTP status (400, 404, 405, 500).
 
