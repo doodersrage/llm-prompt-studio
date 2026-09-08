@@ -47,7 +47,8 @@ export type AuthGroup = {
   updatedAt: number;
 };
 
-export type AuthUserPublic = Omit<AuthUser, 'passwordHash'>;
+/** Safe for session/profile/admin list payloads — never includes password or TOTP secrets. */
+export type AuthUserPublic = Omit<AuthUser, 'passwordHash' | 'totpSecret'>;
 
 export type AuthSession = {
   userId: string;

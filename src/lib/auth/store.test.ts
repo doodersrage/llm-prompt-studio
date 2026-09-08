@@ -360,12 +360,18 @@ describe('auth/store', async () => {
   });
 
   describe('toPublicUser', () => {
-    it('strips passwordHash and keeps every other field', () => {
-      const user = makeUser({ email: 'a@example.com' });
+    it('strips passwordHash and totpSecret and keeps every other field', () => {
+      const user = makeUser({
+        email: 'a@example.com',
+        totpSecret: 'JBSWY3DPEHPK3PXP',
+        totpEnabled: true,
+      });
       const publicUser = toPublicUser(user);
       assert.equal((publicUser as unknown as { passwordHash?: string }).passwordHash, undefined);
+      assert.equal((publicUser as unknown as { totpSecret?: string }).totpSecret, undefined);
       assert.equal(publicUser.id, user.id);
       assert.equal(publicUser.email, 'a@example.com');
+      assert.equal(publicUser.totpEnabled, true);
     });
   });
 
@@ -835,17 +841,18 @@ describe('auth/store', async () => {
         emailNotifyBatch: true,
         emailNotifySecurity: false,
       });
-      assert.equal(updated.totpSecret, 'SECRET');
+      assert.equal((updated as unknown as { totpSecret?: string }).totpSecret, undefined);
       assert.equal(updated.totpEnabled, true);
       assert.equal(updated.email, 'new@example.com');
       assert.equal(updated.emailNotifyBatch, true);
       assert.equal(updated.emailNotifySecurity, false);
+      assert.equal(findUserById('u1')?.totpSecret, 'SECRET');
     });
 
     it('clears totpSecret to undefined when given an empty string', () => {
       usersTable = [makeUser({ id: 'u1', totpSecret: 'OLD' })];
-      const updated = updateUserProfile('u1', { totpSecret: '' });
-      assert.equal(updated.totpSecret, undefined);
+      updateUserProfile('u1', { totpSecret: '' });
+      assert.equal(findUserById('u1')?.totpSecret, undefined);
     });
   });
 

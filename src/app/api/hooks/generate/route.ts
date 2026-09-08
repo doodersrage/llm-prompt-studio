@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { apiError, apiJson, apiMethodNotAllowed } from '@/lib/api/response';
 import { resolveUserIdFromApiKey } from '@/lib/auth/api-keys';
 import { findUserById } from '@/lib/auth/store';
@@ -6,6 +7,15 @@ import { normalizeGenerationSettings } from '@/lib/generation-settings';
 import { readSessionFromRequest } from '@/lib/auth/session';
 
 export const runtime = 'nodejs';
+
+function timingSafeEqualString(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
 
 function extractToken(request: Request): string | undefined {
   const authorization = request.headers.get('authorization');
@@ -31,7 +41,9 @@ export async function POST(request: Request) {
   const user = resolveHookUser(request);
 
   const authorizedByUser = Boolean(user?.enabled);
-  const authorizedBySecret = Boolean(secret && providedSecret && secret === providedSecret);
+  const authorizedBySecret = Boolean(
+    secret && providedSecret && timingSafeEqualString(secret, providedSecret)
+  );
   if (!authorizedByUser && !authorizedBySecret) {
     return apiError('Provide a user API key or X-Prompt-Hook-Secret.', 401);
   }

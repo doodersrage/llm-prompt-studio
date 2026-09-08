@@ -1,4 +1,6 @@
 import { apiError, apiJson, apiMethodNotAllowed } from '@/lib/api/response';
+import { resolveRequestUser } from '@/lib/auth/access';
+import { isAuthEnabled } from '@/lib/auth/store';
 import { getComfyUiBaseUrl } from '@/lib/comfyui-client';
 import { stripEmptyComfyUiRuntime } from '@/lib/comfyui-config';
 import { installComfyUiMissingNodePacks } from '@/lib/comfyui-manager-install';
@@ -6,7 +8,24 @@ import { installComfyUiMissingNodePacks } from '@/lib/comfyui-manager-install';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
+/** Installing custom nodes can execute arbitrary code on the Comfy host — admin when auth is on. */
+function requireAdminWhenAuth(request: Request) {
+  if (!isAuthEnabled()) {
+    return null;
+  }
+  const user = resolveRequestUser(request);
+  if (!user?.enabled || user.role !== 'admin') {
+    return apiError('Admin sign-in required to install ComfyUI custom nodes.', 401);
+  }
+  return null;
+}
+
 export async function POST(request: Request) {
+  const denied = requireAdminWhenAuth(request);
+  if (denied) {
+    return denied;
+  }
+
   let body: { comfyUrl?: string; nodeTypes?: string[] } = {};
   try {
     body = (await request.json()) as typeof body;

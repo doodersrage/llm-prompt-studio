@@ -186,7 +186,7 @@ export function isAuthEnabled(): boolean {
 }
 
 export function toPublicUser(user: AuthUser): AuthUserPublic {
-  const { passwordHash: _passwordHash, ...publicUser } = user;
+  const { passwordHash: _passwordHash, totpSecret: _totpSecret, ...publicUser } = user;
   return publicUser;
 }
 

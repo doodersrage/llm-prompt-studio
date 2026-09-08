@@ -55,7 +55,7 @@ async function fetchComfyViewBytes(searchParams: URLSearchParams): Promise<FilmS
   viewUrl.searchParams.set('type', type);
   const response = await fetch(viewUrl.toString(), {
     signal: AbortSignal.timeout(60_000),
-    redirect: 'follow',
+    redirect: 'manual',
   });
   if (!response.ok) {
     throw new Error(`ComfyUI view returned HTTP ${response.status}`);
@@ -219,7 +219,7 @@ export async function fetchFilmShotBytes(input: {
 
   const safe = assertSafeHttpUrl(parsed.toString(), { allowPrivate: true });
   const response = await fetch(safe.toString(), {
-    redirect: 'follow',
+    redirect: 'manual',
     headers: { Accept: 'image/*,video/*,*/*' },
     signal: AbortSignal.timeout(60_000),
   });

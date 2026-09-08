@@ -129,6 +129,12 @@ const API_FEATURE_MAP: Array<{ prefix: string; feature: AppFeatureId }> = [
   { prefix: '/api/film', feature: 'gallery' },
   { prefix: '/api/runway', feature: 'comfyui-api' },
   { prefix: '/api/plugins/server', feature: 'plugins' },
+  // Previously unmapped ⇒ any signed-in user. Gate to settings/studio so viewers stay read-only.
+  { prefix: '/api/webhooks', feature: 'settings' },
+  { prefix: '/api/storage', feature: 'settings' },
+  { prefix: '/api/scheduled-batch', feature: 'settings' },
+  { prefix: '/api/maintenance', feature: 'settings' },
+  { prefix: '/api/collab', feature: 'studio' },
 ];
 
 export function featureForPath(pathname: string): AppFeatureId | null {

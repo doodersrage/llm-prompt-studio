@@ -71,6 +71,11 @@ describe('auth/features', () => {
       assert.equal(featureForPath('/api/roleplay'), 'llm-api');
       assert.equal(featureForPath('/api/lora-train'), 'settings');
       assert.equal(featureForPath('/api/plugins/server'), 'plugins');
+      assert.equal(featureForPath('/api/webhooks/dispatch'), 'settings');
+      assert.equal(featureForPath('/api/storage'), 'settings');
+      assert.equal(featureForPath('/api/scheduled-batch/run'), 'settings');
+      assert.equal(featureForPath('/api/maintenance/run'), 'settings');
+      assert.equal(featureForPath('/api/collab'), 'studio');
     });
 
     it('returns null for a path that matches nothing', () => {
