@@ -1,5 +1,23 @@
 # Prompt Studio
 
+**Turn a keyword into a queued ComfyUI render, and go from still to clip to a saved character in one loop.**
+
+[![CI](https://github.com/doodersrage/llm-prompt-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/doodersrage/llm-prompt-studio/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/doodersrage/llm-prompt-studio)](https://github.com/doodersrage/llm-prompt-studio/releases)
+[![License: MIT](https://img.shields.io/github/license/doodersrage/llm-prompt-studio)](./LICENSE)
+
+<p align="center">
+  <img src=".github/assets/hero.gif" alt="Prompt Studio: Generate a prompt, send it to ComfyUI, review the result in Gallery" width="820">
+</p>
+
+<!--
+  TODO (not yet captured): replace the image above with a real screenshot or short GIF —
+  see .github/assets/README.md for exactly what to record and where to save it.
+  Until that file exists this <img> will show as broken on GitHub; that's expected
+  and fine to leave uncommitted until you've captured one.
+-->
+
+
 A Next.js app that turns topics or keywords into model-specific prompts for image and video workflows (ComfyUI primary for generate / Lightning / specialty graphs; Diffusers optional for stills only — txt2img/img2img, not Play film; Fal and Replicate for cloud stills + clips; Grok and Gemini for stills plus native video; ChatGPT stills only), and reformats existing drafts for any supported architecture.
 
 **Docs:** [doodersrage.github.io/llm-prompt-studio](https://doodersrage.github.io/llm-prompt-studio/) · [source](docs/README.md)
