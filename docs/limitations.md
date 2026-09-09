@@ -59,11 +59,13 @@ setup time, and it's easy to miss when it's scattered across a dozen feature bul
 
 ## Testing and platform
 
-- **The accessibility check is new and not yet wired into CI.** `npm run
-  test:e2e:a11y` covers five key pages (Generate, Gallery, Compose, Inpaint,
-  Workflow editor) for critical/serious axe-core violations, but it's opt-in for
-  now — a clean run today says nothing about pages it doesn't cover, and it
-  hasn't been run in this repo's own CI yet.
+- **The accessibility check only covers five pages, and only two severities.**
+  `npm run test:e2e:a11y` (`e2e/accessibility.spec.ts`) checks Generate, Gallery,
+  Compose, Inpaint, and the Workflow editor for `critical`/`serious` axe-core
+  violations — it does ride along in CI (the catch-all `npm run test:e2e` step
+  at the end of the `e2e` job scans all of `e2e/`), but not as its own named,
+  isolated gate, and a clean run says nothing about pages outside those five or
+  about `moderate`/`minor` findings, which are logged rather than failed.
 - **Linux AppImage is slower than the `.deb` on non-Ubuntu distros.** The
   AppImage embeds Ubuntu's WebKit; on Arch/Fedora and similar rolling distros it
   can feel sluggish compared to the `.deb`, which uses the system WebKit. See

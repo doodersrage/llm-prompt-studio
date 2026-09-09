@@ -42,9 +42,12 @@ npm run test:e2e:ops
 There's also `npm run test:e2e:a11y` — an axe-core smoke pass over Generate, Gallery,
 Compose, Inpaint, and the Workflow editor, failing only on `critical`/`serious` impact
 violations (`moderate`/`minor` findings are logged, not failed, to avoid drowning in
-pre-existing noise). It's not in the CI `e2e` job yet — run it locally against any page
-you touch that has non-standard interaction (canvas, drag-and-drop, custom widgets)
-before deciding whether it's clean enough to wire in as a blocking check.
+pre-existing noise). It runs on every push and PR too — the catch-all `npm run test:e2e`
+step at the end of the CI `e2e` job scans all of `e2e/` with no path filter, so
+`accessibility.spec.ts` rides along with it — but it's not a named, isolated step, so a
+failure there surfaces mixed in with whatever else that last step covers. Run it locally
+with the narrower command above against any page you touch that has non-standard
+interaction (canvas, drag-and-drop, custom widgets) for a clearer signal before pushing.
 
 A pre-commit hook (husky + lint-staged) already runs `eslint --fix` and `prettier --write`
 on staged `.ts`/`.tsx` files, so most formatting nits are handled for you automatically.
