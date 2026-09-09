@@ -65,7 +65,7 @@ Jump to: [Prompt generation](#prompt-generation) · [Scene tools](#scene-tools) 
 - **Wardrobe avoided tokens** — low-rated motifs filter catalog wardrobe picks across generators
 - **Catalog rating bias** — Studio catalog sorts clothing/locations by gallery review scores; click **Insert** to add to hints
 - **Rating-driven random** — history/gallery favorites and downvotes subtly adjust random-scene wildness
-- **Adult generator plugin** — env-gated `/plugins/nsfw-generator` with 120+ built-in presets, search/favorites/recent, user-saved presets, and Rapid AIO / Z-Image / Qwen quality recipes
+- **Adult generator plugin** — env-gated `/plugins/nsfw-generator` with 120+ built-in presets, search/favorites/recent, user-saved presets, and Rapid AIO / Z-Image / Qwen quality recipes. A one-time in-browser acknowledgment (18+, legal where you are, consenting adults only) gates the tool itself, separate from the env flags that gate the deploy.
 - **LoRA stack inline tuning** — per-run model/clip strength overrides in the sidebar (session-only; included in session recipes and compare recipes)
 
 ## Studio {#studio}
