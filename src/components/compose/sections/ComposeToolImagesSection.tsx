@@ -6,7 +6,7 @@ import { FieldLabel } from '@/components/ui/Field';
 import { ChipButton } from '@/components/ui/Field';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import type { useComposeToolOrchestration } from '@/hooks/useComposeToolOrchestration';
-import type { ComposeTransferRecipe } from '@/lib/compose-transfer-scan-shared';
+import { COMPOSE_TRANSFER_RECIPE_OPTIONS } from '@/lib/compose-transfer-scan-shared';
 
 type ComposeSlot = ReturnType<typeof useComposeToolOrchestration>['slots'][number];
 
@@ -26,19 +26,6 @@ type Props = Pick<
   assignFigure: ReturnType<typeof useComposeToolOrchestration>['assignFigure'];
   scanWithVision: () => void | Promise<void>;
 };
-
-const RECIPE_OPTIONS: Array<{ id: ComposeTransferRecipe; label: string; title: string }> = [
-  {
-    id: 'pose-from-1-people-from-rest',
-    label: 'Pose ← 1 · People ← 2+',
-    title: 'Pose and framing from Image 1; persons / identity from Images 2–4',
-  },
-  {
-    id: 'people-from-1-pose-from-2',
-    label: 'People ← 1 · Pose ← 2',
-    title: 'Persons from Image 1; pose and body energy from Image 2',
-  },
-];
 
 export function ComposeToolImagesSection({
   mode,
@@ -192,7 +179,7 @@ export function ComposeToolImagesSection({
           Vision-reads every filled slot, then writes a transfer instruction into the prompt box.
         </p>
         <div className="flex flex-wrap gap-2">
-          {RECIPE_OPTIONS.map(option => (
+          {COMPOSE_TRANSFER_RECIPE_OPTIONS.map(option => (
             <ChipButton
               key={option.id}
               active={transferScanRecipe === option.id}

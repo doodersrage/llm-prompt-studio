@@ -21,6 +21,7 @@ import { chatCompletion } from '@/lib/llm-client';
 import {
   COMPOSE_TRANSFER_RECIPE_GUIDANCE,
   composeTransferRoleForIndex,
+  composeTransferVisionHintForRole,
   fallbackComposeTransferInstruction,
   normalizeComposeTransferRecipe,
   parseComposeTransferInstruction,
@@ -83,11 +84,7 @@ export async function runComposeTransferScan(options: {
         descriptionPreset: 'standard',
         extraHints: [
           `This is Image ${entry.index} for a Compose transfer.`,
-          role === 'structure'
-            ? 'Emphasize pose, body language, limb placement, and camera framing.'
-            : role === 'primary'
-              ? 'Emphasize who the person(s) are — face, hair, body, clothes, identity cues.'
-              : 'Note wardrobe, environment, or mood that should transfer.',
+          composeTransferVisionHintForRole(role),
           options.extraHints?.trim() || '',
         ]
           .filter(Boolean)

@@ -9,7 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Compose: multi-image Transfer scan — vision-reads filled slots and writes a transfer instruction (pose from Image 1 + people from 2+, or people from Image 1 + pose from Image 2).
+- Compose: multi-image Transfer scan — vision-reads filled slots and writes a transfer instruction (pose/people, outfit, background, style/light, hair, expression recipes).
 
 ## [v1.6.0] - 2026-09-06
 

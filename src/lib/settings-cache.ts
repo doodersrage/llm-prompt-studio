@@ -741,7 +741,7 @@ export type ImageComposeToolCache = {
    * Multi-image vision transfer scan recipe.
    * Default: pose from Image 1, people from Image 2+.
    */
-  transferScanRecipe?: 'pose-from-1-people-from-rest' | 'people-from-1-pose-from-2';
+  transferScanRecipe?: import('./compose-transfer-scan-shared').ComposeTransferRecipe;
   /**
    * Cut Image 1 onto a white plate before queueing so edit models cannot lock
    * onto the original background. Default on; Images 2–4 are left intact.
