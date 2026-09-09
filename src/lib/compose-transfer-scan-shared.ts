@@ -7,6 +7,7 @@ import { stripPromptArtifacts } from '@/lib/prompt-cleanup';
 export const COMPOSE_TRANSFER_RECIPE_IDS = [
   'pose-from-1-people-from-rest',
   'people-from-1-pose-from-2',
+  'people-from-1-pose-scene-from-2',
   'outfit-from-2',
   'background-from-2',
   'style-from-2',
@@ -44,6 +45,13 @@ export const COMPOSE_TRANSFER_RECIPE_OPTIONS: ComposeTransferRecipeOption[] = [
     title: 'Persons from Image 1; pose and body energy from Image 2',
     guidance:
       'Persons / identity come from Image 1. Pose, action, and body energy come from Image 2 (extras for wardrobe/scene when present).',
+  },
+  {
+    id: 'people-from-1-pose-scene-from-2',
+    label: 'People ← 1 · Pose+Scene ← 2',
+    title: 'Keep only the person from Image 1; completely replace pose and scene with Image 2',
+    guidance:
+      'Keep only the person(s) / identity from Image 1. Completely discard Image 1 pose, framing, and environment. Match body pose, limb placement, camera framing, AND the full scene / background from Image 2 so the subject is re-staged as if they were photographed in Image 2.',
   },
   {
     id: 'outfit-from-2',
@@ -106,6 +114,10 @@ export function composeTransferRoleForIndex(
       if (index === 1) return { role: 'primary', focus: 'subject' };
       if (index === 2) return { role: 'structure', focus: 'subject' };
       return { role: 'reference', focus: 'full' };
+    case 'people-from-1-pose-scene-from-2':
+      if (index === 1) return { role: 'primary', focus: 'subject' };
+      if (index === 2) return { role: 'pose-scene', focus: 'full' };
+      return { role: 'reference', focus: 'full' };
     case 'outfit-from-2':
       if (index === 1) return { role: 'primary', focus: 'subject' };
       return { role: 'wardrobe', focus: 'subject' };
@@ -133,6 +145,8 @@ export function composeTransferVisionHintForRole(role: string): string {
   switch (role) {
     case 'structure':
       return 'Emphasize pose, body language, limb placement, and camera framing.';
+    case 'pose-scene':
+      return 'Emphasize both: (1) full-body pose, limb placement, and camera framing, and (2) the entire environment — setting, background, lighting, and props. Describe the whole staged scene.';
     case 'primary':
       return 'Emphasize who the person(s) are — face, hair, body, clothes, identity cues.';
     case 'wardrobe':
@@ -210,6 +224,18 @@ export function fallbackComposeTransferInstruction(
           : rest
             ? `. Match pose and scene cues from ${rest}`
             : '',
+      ]);
+    case 'people-from-1-pose-scene-from-2':
+      return joinSentence([
+        'Keep only the person(s) and identity from Image 1',
+        img1 ? `(${img1})` : '',
+        '. Completely replace Image 1 pose, framing, and environment',
+        img2
+          ? ` with the full pose and scene from Image 2 (${img2})`
+          : rest
+            ? ` with the pose and scene from ${rest}`
+            : '',
+        ' so they appear restaged in that photograph',
       ]);
     case 'outfit-from-2':
       return joinSentence([

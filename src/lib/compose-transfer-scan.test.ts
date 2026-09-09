@@ -47,6 +47,11 @@ describe('compose-transfer-scan helpers', () => {
       role: 'look',
       focus: 'full',
     });
+    assert.deepEqual(composeTransferRoleForIndex(2, 'people-from-1-pose-scene-from-2'), {
+      role: 'pose-scene',
+      focus: 'full',
+    });
+    assert.match(composeTransferVisionHintForRole('pose-scene'), /environment/i);
     assert.match(composeTransferVisionHintForRole('wardrobe'), /clothing/i);
   });
 
@@ -67,6 +72,10 @@ describe('compose-transfer-scan helpers', () => {
     const posePeople = fallbackComposeTransferInstruction(parts, 'pose-from-1-people-from-rest');
     assert.match(posePeople, /pose.*Image 1/i);
     assert.match(posePeople, /Image 2 and Image 3/i);
+
+    const poseScene = fallbackComposeTransferInstruction(parts, 'people-from-1-pose-scene-from-2');
+    assert.match(poseScene, /completely replace|restaged/i);
+    assert.match(poseScene, /pose and scene.*Image 2/i);
 
     const outfit = fallbackComposeTransferInstruction(parts, 'outfit-from-2');
     assert.match(outfit, /outfit|clothing/i);
