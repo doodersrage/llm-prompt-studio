@@ -77,12 +77,15 @@ final commit message descriptive, since it's what shows up in release notes.
 [docs/architecture.md](docs/architecture.md) has the fuller map if you're navigating for
 the first time.
 
-## Reporting issues
+## Reporting issues and asking questions
 
-There's no issue template yet, so a plain description works — what you expected, what
-happened, and (if it's generation-related) which model/engine and whether ComfyUI or a
-cloud engine was in play. Screenshots or a gallery/queue export help a lot for anything
-visual.
+GitHub Issues is the place for both right now — there's no issue template yet, so a
+plain description works: what you expected, what happened, and (if it's
+generation-related) which model/engine and whether ComfyUI or a cloud engine was in
+play. Screenshots or a gallery/queue export help a lot for anything visual. If this
+repo starts getting enough traffic that open-ended questions are crowding out actual
+bug reports, GitHub Discussions is the natural next step — not turned on yet, just
+worth knowing it's the plan rather than defaulting to Issues forever.
 
 ## License
 

@@ -137,7 +137,7 @@ Audio and 3D use **Audio** (`/audio`) and **3D Mesh** (`/mesh`). **WAN / Hunyuan
 
 Legacy URLs `/duo` and `/random-scene` redirect to Character and Generate.
 
-**Feature depth:** [docs/features.md](docs/features.md). **Ops:** [docs/operator.md](docs/operator.md).
+**Feature depth:** [docs/features.md](docs/features.md). **Ops:** [docs/operator.md](docs/operator.md). **Known limitations:** [docs/limitations.md](docs/limitations.md).
 
 ## ComfyUI integration
 
