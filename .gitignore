@@ -62,3 +62,9 @@ services/**/.venv/
 /desktop/src-tauri/binaries/*
 !/desktop/src-tauri/binaries/.gitkeep
 /desktop/node_modules/
+
+# Local mirror of files Claude sends into chat via the device bridge (not project source)
+/Claude outputs/
+
+# Scratch cleanup folder from Claude's device-bridge git lock/tmp-object sweeps
+/_to_delete/
