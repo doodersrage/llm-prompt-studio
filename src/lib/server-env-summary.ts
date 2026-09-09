@@ -5,6 +5,8 @@ import { isServerStorageEnabled } from './server-storage';
 import { getEmailConfig, isEmailConfigured } from './email/config';
 import { isAuthExplicitlyEnabled } from './auth/config';
 import { isUsingInsecureSessionSecret } from './session-secret-check';
+import { isUsingDefaultAdminCredentials } from './default-admin-check';
+import { getDefaultAdminUsername } from './auth/config';
 import { DESKTOP_SHELL_ENV, isDesktopShellServer } from './desktop-shell';
 import { isNsfwGeneratorEnabledServer, NSFW_GENERATOR_ENV_SERVER } from './nsfw-generator-env';
 
@@ -354,6 +356,17 @@ export function getServerEnvSummary(): ServerEnvSummary {
               : 'not needed (login not required)',
           configured: !isUsingInsecureSessionSecret(),
           hint: 'Session cookies fall back to a hardcoded secret from the public source code when unset. Fine while login is off; set a real PROMPT_SESSION_SECRET before enabling PROMPT_AUTH_ENABLED beyond localhost.',
+        },
+        {
+          key: 'PROMPT_ADMIN_PASSWORD',
+          label: 'Default admin password',
+          value: isUsingDefaultAdminCredentials()
+            ? `INSECURE - "${getDefaultAdminUsername()}" is still on the default password`
+            : flag(process.env.PROMPT_ADMIN_PASSWORD)
+              ? 'configured'
+              : 'not needed (login not required)',
+          configured: !isUsingDefaultAdminCredentials(),
+          hint: 'The bootstrap admin account stays on the well-known default password ("admin") baked into this open-source repo until PROMPT_ADMIN_PASSWORD is set. Set it before enabling PROMPT_AUTH_ENABLED beyond localhost.',
         },
         {
           key: 'API_RATE_LIMIT_MAX',

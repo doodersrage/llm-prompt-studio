@@ -68,6 +68,12 @@ export async function register() {
     console.warn(`[security] ${INSECURE_SESSION_SECRET_WARNING}`);
   }
 
+  const { isUsingDefaultAdminCredentials, getDefaultAdminCredentialsWarning } =
+    await import('./lib/default-admin-check');
+  if (isUsingDefaultAdminCredentials()) {
+    console.warn(`[security] ${getDefaultAdminCredentialsWarning()}`);
+  }
+
   startServerScheduledBatchLoop();
 
   if (process.env.SERVER_USER_MAINTENANCE === 'true') {

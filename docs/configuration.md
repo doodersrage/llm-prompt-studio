@@ -21,7 +21,7 @@ Before exposing Prompt Studio beyond a trusted LAN:
 
 - [ ] Do not publish compose ports without `--profile exposed` (auth + secrets required)
 - [ ] Confirm Settings → Overview shows Auth = accounts on
-- [ ] Set strong `PROMPT_ADMIN_PASSWORD` and rotate after first login
+- [ ] Set strong `PROMPT_ADMIN_PASSWORD` and rotate after first login - if `PROMPT_AUTH_ENABLED=true` and this is left unset, the admin account stays on the well-known default password ("admin") baked into this open-source repo, and the server logs a `[security]` warning at startup and in Settings → Overview until it's set
 - [ ] Set `PROMPT_SESSION_SECRET` (long random string; do not reuse API tokens) - if `PROMPT_AUTH_ENABLED=true` and this is left unset, session cookies fall back to a hardcoded secret from the public source, and the server logs a `[security]` warning at startup and in Settings → Overview until it's set
 - [ ] Enable `PROMPT_AUTH_ENABLED=true` and create non-admin users with blocked features as needed
 - [ ] Set `PROMPT_API_TOKEN` for CLI/ComfyUI nodes; issue per-user `pt_…` keys from Profile when sharing access

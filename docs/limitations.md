@@ -48,6 +48,14 @@ setup time, and it's easy to miss when it's scattered across a dozen feature bul
   source — the server now warns loudly about this at startup and in Settings →
   Overview, but it's worth knowing the failure mode exists at all rather than
   assuming auth-on always means secure-by-default.
+- **The default admin account stays on a well-known password until you change
+  it.** If `PROMPT_AUTH_ENABLED=true` and `PROMPT_ADMIN_PASSWORD` is left unset,
+  the bootstrap admin user is kept in sync with the literal default password
+  ("admin") baked into this open-source repo on every server start. The server
+  now warns loudly about this too (startup log and Settings → Overview) — but
+  default credentials are the single most common way a self-hosted app like
+  this actually gets compromised, so set `PROMPT_ADMIN_PASSWORD` before this
+  is reachable beyond localhost.
 
 ## Testing and platform
 

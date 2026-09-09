@@ -47,6 +47,8 @@ const ENV_KEYS = [
   "PROMPT_API_TOKEN",
   "PROMPT_AUTH_ENABLED",
   "PROMPT_SESSION_SECRET",
+  "PROMPT_ADMIN_PASSWORD",
+  "PROMPT_ADMIN_USERNAME",
   "API_RATE_LIMIT_MAX",
   "API_RATE_LIMIT_WINDOW_SEC",
   "WEBHOOK_ALLOW_PRIVATE",
@@ -447,6 +449,34 @@ describe("server-env-summary", async () => {
         // Auth off entirely - unset secret is not a problem worth flagging.
         const fields = findGroup(getServerEnvSummary(), "security").fields;
         const field = findField(fields, "PROMPT_SESSION_SECRET");
+        assert.equal(field.value, "not needed (login not required)");
+        assert.equal(field.configured, true);
+      });
+    });
+
+    it("flags default admin credentials only when auth is enabled and the password is unset", () => {
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_ADMIN_PASSWORD");
+        assert.equal(field.value, 'INSECURE - "admin" is still on the default password');
+        assert.equal(field.configured, false);
+      });
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true", PROMPT_ADMIN_USERNAME: "root" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_ADMIN_PASSWORD");
+        assert.equal(field.value, 'INSECURE - "root" is still on the default password');
+        assert.equal(field.configured, false);
+      });
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true", PROMPT_ADMIN_PASSWORD: "a-strong-password" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_ADMIN_PASSWORD");
+        assert.equal(field.value, "configured");
+        assert.equal(field.configured, true);
+      });
+      withCleanEnv({}, () => {
+        // Auth off entirely - default password is not a problem worth flagging.
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_ADMIN_PASSWORD");
         assert.equal(field.value, "not needed (login not required)");
         assert.equal(field.configured, true);
       });
