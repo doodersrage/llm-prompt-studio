@@ -50,6 +50,7 @@ describe('user-server-storage', async () => {
     countUserGalleryEntries,
     listUserExportFiles,
     writeUserExportSnapshot,
+    pruneUserExportSnapshots,
     isUserStorageNamespace,
     USER_STORAGE_NAMESPACES,
   } = await import('./user-server-storage');
@@ -188,6 +189,112 @@ describe('user-server-storage', async () => {
           const filePath = path.join(dir, 'users', 'weird_id', 'exports', filename);
           assert.ok(fs.existsSync(filePath));
           assert.ok(filename.includes('weird_name_'));
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('writeUserExportSnapshot rotation', () => {
+    afterEach(() => {
+      delete process.env.SERVER_USER_MAINTENANCE_EXPORT_KEEP;
+    });
+
+    it('prunes older snapshots beyond the default keep count (20)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-studio-user-export-'));
+      try {
+        withEnv('PROMPT_DATA_DIR', dir, () => {
+          const exportsDir = path.join(dir, 'users', 'u1', 'exports');
+          fs.mkdirSync(exportsDir, { recursive: true });
+          // 25 pre-existing snapshots, oldest-first by name so sorting is deterministic.
+          for (let i = 0; i < 25; i += 1) {
+            const stamp = String(i).padStart(3, '0');
+            fs.writeFileSync(path.join(exportsDir, `${stamp}-old.json`), '{}');
+          }
+          writeUserExportSnapshot('u1', 'alice', { a: 1 });
+          // 25 old + 1 new = 26 total; keep 20 → 6 deleted, oldest first.
+          const remaining = fs.readdirSync(exportsDir).filter(name => name.endsWith('.json'));
+          assert.equal(remaining.length, 20);
+          assert.ok(!remaining.includes('000-old.json'));
+          assert.ok(!remaining.includes('005-old.json'));
+          assert.ok(remaining.includes('006-old.json'));
+          assert.ok(remaining.includes('024-old.json'));
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('honors SERVER_USER_MAINTENANCE_EXPORT_KEEP', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-studio-user-export-'));
+      try {
+        withEnv('PROMPT_DATA_DIR', dir, () => {
+          withEnv('SERVER_USER_MAINTENANCE_EXPORT_KEEP', '2', () => {
+            const exportsDir = path.join(dir, 'users', 'u1', 'exports');
+            fs.mkdirSync(exportsDir, { recursive: true });
+            fs.writeFileSync(path.join(exportsDir, '000-old.json'), '{}');
+            fs.writeFileSync(path.join(exportsDir, '001-old.json'), '{}');
+            writeUserExportSnapshot('u1', 'alice', { a: 1 });
+            const remaining = fs.readdirSync(exportsDir).filter(name => name.endsWith('.json'));
+            assert.equal(remaining.length, 2);
+            assert.ok(!remaining.includes('000-old.json'));
+          });
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('disables pruning when SERVER_USER_MAINTENANCE_EXPORT_KEEP is 0', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-studio-user-export-'));
+      try {
+        withEnv('PROMPT_DATA_DIR', dir, () => {
+          withEnv('SERVER_USER_MAINTENANCE_EXPORT_KEEP', '0', () => {
+            const exportsDir = path.join(dir, 'users', 'u1', 'exports');
+            fs.mkdirSync(exportsDir, { recursive: true });
+            for (let i = 0; i < 30; i += 1) {
+              fs.writeFileSync(path.join(exportsDir, `${String(i).padStart(3, '0')}-old.json`), '{}');
+            }
+            writeUserExportSnapshot('u1', 'alice', { a: 1 });
+            const remaining = fs.readdirSync(exportsDir).filter(name => name.endsWith('.json'));
+            assert.equal(remaining.length, 31);
+          });
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('pruneUserExportSnapshots', () => {
+    afterEach(() => {
+      delete process.env.SERVER_USER_MAINTENANCE_EXPORT_KEEP;
+    });
+
+    it('returns { deleted: [] } when the export directory does not exist', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-studio-user-export-'));
+      try {
+        withEnv('PROMPT_DATA_DIR', dir, () => {
+          assert.deepEqual(pruneUserExportSnapshots('brand-new-user'), { deleted: [] });
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('is a no-op when the file count is at or under the keep count', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-studio-user-export-'));
+      try {
+        withEnv('PROMPT_DATA_DIR', dir, () => {
+          withEnv('SERVER_USER_MAINTENANCE_EXPORT_KEEP', '5', () => {
+            const exportsDir = path.join(dir, 'users', 'u1', 'exports');
+            fs.mkdirSync(exportsDir, { recursive: true });
+            fs.writeFileSync(path.join(exportsDir, 'a.json'), '{}');
+            fs.writeFileSync(path.join(exportsDir, 'b.json'), '{}');
+            assert.deepEqual(pruneUserExportSnapshots('u1'), { deleted: [] });
+            assert.equal(fs.readdirSync(exportsDir).length, 2);
+          });
         });
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });

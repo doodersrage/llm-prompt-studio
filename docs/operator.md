@@ -133,7 +133,7 @@ Also stored there when configured:
 | File                      | Contents                                                                                                                 |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `studio.sqlite`           | Auth, gallery rows, settings/history/extras, SMTP overlay, collab rooms (copy `-wal` / `-shm` too if the app is running) |
-| `users/{userId}/exports/` | Per-user export snapshots (still JSON files)                                                                             |
+| `users/{userId}/exports/` | Per-user export snapshots (still JSON files) — auto-pruned to the newest `SERVER_USER_MAINTENANCE_EXPORT_KEEP` (default 20) per user whenever `SERVER_USER_MAINTENANCE=true` writes one |
 | `*.json.imported`         | One-shot leftovers from the pre-SQLite layout                                                                            |
 
 Copy or snapshot `PROMPT_DATA_DIR` as part of host backups. Settings → Advanced can pull/push namespaces when storage is enabled.

@@ -64,6 +64,56 @@ export function listUserExportFiles(userId: string): string[] {
   }
 }
 
+/**
+ * Max snapshot files kept per user under `users/{userId}/exports/` after each
+ * `writeUserExportSnapshot` call. Snapshots accumulate on every scheduled-maintenance
+ * tick (`SERVER_USER_MAINTENANCE_INTERVAL_MIN`, default 15 min) with no bound otherwise,
+ * so left running for weeks this directory grows unboundedly. Set to 0 (or a negative
+ * number) to disable pruning entirely.
+ */
+function exportSnapshotKeepCount(): number {
+  const raw = process.env.SERVER_USER_MAINTENANCE_EXPORT_KEEP?.trim();
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 20;
+}
+
+/**
+ * Deletes the oldest snapshot files for a user beyond `exportSnapshotKeepCount()`,
+ * relying on the `<ISO-timestamp>-<username>.json` naming from `writeUserExportSnapshot`
+ * so lexicographic filename order is chronological order. No-ops (rather than throwing)
+ * if the directory can't be read, so a pruning failure never blocks the export it follows.
+ */
+export function pruneUserExportSnapshots(userId: string): { deleted: string[] } {
+  const keep = exportSnapshotKeepCount();
+  if (keep <= 0) {
+    return { deleted: [] };
+  }
+  const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const dir = path.join(dataDir(), 'users', safeUserId, 'exports');
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter(name => name.endsWith('.json'));
+  } catch {
+    return { deleted: [] };
+  }
+  files.sort();
+  const excess = files.length - keep;
+  if (excess <= 0) {
+    return { deleted: [] };
+  }
+  const toDelete = files.slice(0, excess);
+  const deleted: string[] = [];
+  for (const name of toDelete) {
+    try {
+      fs.unlinkSync(path.join(dir, name));
+      deleted.push(name);
+    } catch {
+      // Leave it for the next prune pass rather than failing the export.
+    }
+  }
+  return { deleted };
+}
+
 export function writeUserExportSnapshot(
   userId: string,
   username: string,
@@ -76,6 +126,7 @@ export function writeUserExportSnapshot(
   const filename = `${stamp}-${username.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
   const filePath = path.join(dir, filename);
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+  pruneUserExportSnapshots(userId);
   return filename;
 }
 
