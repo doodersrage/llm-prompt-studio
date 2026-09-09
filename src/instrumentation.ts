@@ -62,6 +62,12 @@ export async function register() {
     return;
   }
 
+  const { isUsingInsecureSessionSecret, INSECURE_SESSION_SECRET_WARNING } =
+    await import('./lib/session-secret-check');
+  if (isUsingInsecureSessionSecret()) {
+    console.warn(`[security] ${INSECURE_SESSION_SECRET_WARNING}`);
+  }
+
   startServerScheduledBatchLoop();
 
   if (process.env.SERVER_USER_MAINTENANCE === 'true') {

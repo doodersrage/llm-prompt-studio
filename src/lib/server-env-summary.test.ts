@@ -46,6 +46,7 @@ const ENV_KEYS = [
   "PROMPT_NSFW_GENERATOR_ENABLED",
   "PROMPT_API_TOKEN",
   "PROMPT_AUTH_ENABLED",
+  "PROMPT_SESSION_SECRET",
   "API_RATE_LIMIT_MAX",
   "API_RATE_LIMIT_WINDOW_SEC",
   "WEBHOOK_ALLOW_PRIVATE",
@@ -420,6 +421,34 @@ describe("server-env-summary", async () => {
       withCleanEnv({}, () => {
         const fields = findGroup(getServerEnvSummary(), "security").fields;
         assert.equal(findField(fields, "PROMPT_AUTH_ENABLED").value, "false");
+      });
+    });
+
+    it("flags an insecure fallback session secret only when auth is enabled and unset", () => {
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_SESSION_SECRET");
+        assert.equal(field.value, "INSECURE - using hardcoded fallback");
+        assert.equal(field.configured, false);
+      });
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true", PROMPT_SESSION_SECRET: "a-real-secret" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_SESSION_SECRET");
+        assert.equal(field.value, "configured");
+        assert.equal(field.configured, true);
+      });
+      withCleanEnv({ PROMPT_AUTH_ENABLED: "true", PROMPT_API_TOKEN: "a-real-token" }, () => {
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_SESSION_SECRET");
+        assert.equal(field.value, "configured");
+        assert.equal(field.configured, true);
+      });
+      withCleanEnv({}, () => {
+        // Auth off entirely - unset secret is not a problem worth flagging.
+        const fields = findGroup(getServerEnvSummary(), "security").fields;
+        const field = findField(fields, "PROMPT_SESSION_SECRET");
+        assert.equal(field.value, "not needed (login not required)");
+        assert.equal(field.configured, true);
       });
     });
 
