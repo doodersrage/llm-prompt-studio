@@ -40,6 +40,12 @@ npm run dev
 
 Open [http://localhost:47832](http://localhost:47832).
 
+**Nothing else running yet?** The UI is still worth exploring: `ALLOW_TEMPLATE_FALLBACK`
+defaults to `true`, so Generate falls back to rule-based prompt templates when there's no
+reachable LLM, letting you click through model picking, prompt styles, Lint, and the rest
+of the tools with zero setup. Actually queuing a render needs a real backend — pick up at
+step 1 below when you're ready to point it at one.
+
 1. Set `COMFYUI_API_URL`, `LLM_MODEL`, and ideally `LLM_VISION_MODEL` in `.env.local`.
 2. Use **Heal & ready** on first launch (Settings → Overview).
 3. Generate a prompt on **Generate**, then **Send to ComfyUI**.
@@ -154,6 +160,13 @@ npm run clothing:count
 Details: [docs/data-catalogs.md](docs/data-catalogs.md) and [docs/performance/guide.md](docs/performance/guide.md).
 
 **Full docs (searchable):** `pip install -r docs/requirements-docs.txt && npm run docs:serve` → [http://127.0.0.1:8000](http://127.0.0.1:8000)
+
+## Development
+
+Built solo, with heavy use of Claude Code for implementation and test-writing — the
+architecture, product direction, and review are mine; a lot of the line-by-line code and
+much of the ~550-test unit suite were written collaboratively with it. Mentioned here
+upfront rather than left for someone to notice in the branch history.
 
 ## License
 
