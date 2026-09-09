@@ -39,6 +39,13 @@ npm run test:e2e:play
 npm run test:e2e:ops
 ```
 
+There's also `npm run test:e2e:a11y` — an axe-core smoke pass over Generate, Gallery,
+Compose, Inpaint, and the Workflow editor, failing only on `critical`/`serious` impact
+violations (`moderate`/`minor` findings are logged, not failed, to avoid drowning in
+pre-existing noise). It's not in the CI `e2e` job yet — run it locally against any page
+you touch that has non-standard interaction (canvas, drag-and-drop, custom widgets)
+before deciding whether it's clean enough to wire in as a blocking check.
+
 A pre-commit hook (husky + lint-staged) already runs `eslint --fix` and `prettier --write`
 on staged `.ts`/`.tsx` files, so most formatting nits are handled for you automatically.
 
