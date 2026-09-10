@@ -294,7 +294,9 @@ test('play metrics card appears on dashboard when metrics exist', async ({ page 
   });
   await gotoStable(page, '/dashboard');
   await dismissBlockingOverlays(page);
-  await expect(page.getByTestId('play-film-metrics')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('main').getByTestId('play-film-metrics')).toBeVisible({
+    timeout: 30_000,
+  });
 });
 
 test('copy share link button copies portable hash url', async ({ page, context }) => {

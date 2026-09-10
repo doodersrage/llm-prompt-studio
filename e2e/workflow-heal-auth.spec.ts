@@ -237,13 +237,16 @@ test.describe('Play dogfood glue', () => {
     });
     await page.reload();
     await dismissBlockingOverlays(page);
-    await expect(page.getByTestId('play-film-metrics')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('play-metrics-empty')).toBeVisible();
-    const emptyPlayCta = page.getByTestId('play-empty-start').or(page.getByTestId('play-next-cta'));
+    const metrics = page.getByRole('main').getByTestId('play-film-metrics');
+    await expect(metrics).toBeVisible({ timeout: 30_000 });
+    await expect(metrics.getByTestId('play-metrics-empty')).toBeVisible();
+    const emptyPlayCta = metrics
+      .getByTestId('play-empty-start')
+      .or(metrics.getByTestId('play-next-cta'));
     await expect(emptyPlayCta.first()).toBeVisible();
     await expect(emptyPlayCta.first()).toHaveAttribute('href', '/play');
-    await expect(page.getByTestId('play-funnel-steps')).toBeVisible();
-    await expect(page.getByTestId('play-metrics-heal')).toBeVisible();
+    await expect(metrics.getByTestId('play-funnel-steps')).toBeVisible();
+    await expect(metrics.getByTestId('play-metrics-heal')).toBeVisible();
   });
 
   test('seeded still + campaign metrics CTA resumes Day cut path', async ({ page }) => {
@@ -311,13 +314,14 @@ test.describe('Play dogfood glue', () => {
     });
     await page.reload();
     await dismissBlockingOverlays(page);
-    await expect(page.getByTestId('play-film-metrics')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('play-next-cta')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('play-funnel-step-day')).toHaveAttribute('data-active', 'true');
-    await expect(page.getByTestId('play-funnel-stall')).toBeVisible();
-    await expect(page.getByTestId('play-funnel-stall')).toHaveAttribute('data-stall-step', 'cut');
-    await expect(page.getByTestId('play-stall-cta')).toBeVisible();
-    const stallHref = await page.getByTestId('play-stall-cta').getAttribute('href');
+    const metrics = page.getByRole('main').getByTestId('play-film-metrics');
+    await expect(metrics).toBeVisible({ timeout: 30_000 });
+    await expect(metrics.getByTestId('play-next-cta')).toBeVisible({ timeout: 15_000 });
+    await expect(metrics.getByTestId('play-funnel-step-day')).toHaveAttribute('data-active', 'true');
+    await expect(metrics.getByTestId('play-funnel-stall')).toBeVisible();
+    await expect(metrics.getByTestId('play-funnel-stall')).toHaveAttribute('data-stall-step', 'cut');
+    await expect(metrics.getByTestId('play-stall-cta')).toBeVisible();
+    const stallHref = await metrics.getByTestId('play-stall-cta').getAttribute('href');
     expect(stallHref).toMatch(/\/day/);
   });
 
@@ -446,11 +450,12 @@ test.describe('Play dogfood glue', () => {
 
     await gotoStable(page, '/dashboard');
     await dismissBlockingOverlays(page);
-    await expect(page.getByTestId('play-film-metrics')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('play-funnel-stall')).toBeVisible();
-    await expect(page.getByTestId('play-funnel-stall')).toHaveAttribute('data-stall-step', 'cut');
-    await expect(page.getByTestId('play-stall-cta')).toBeVisible();
-    await page.getByTestId('play-stall-cta').click();
+    const metrics = page.getByRole('main').getByTestId('play-film-metrics');
+    await expect(metrics).toBeVisible({ timeout: 30_000 });
+    await expect(metrics.getByTestId('play-funnel-stall')).toBeVisible();
+    await expect(metrics.getByTestId('play-funnel-stall')).toHaveAttribute('data-stall-step', 'cut');
+    await expect(metrics.getByTestId('play-stall-cta')).toBeVisible();
+    await metrics.getByTestId('play-stall-cta').click();
     await expect(page).toHaveURL(/\/day/, { timeout: 30_000 });
 
     const cutBtn = page.getByRole('button', { name: /Cut film/i });
