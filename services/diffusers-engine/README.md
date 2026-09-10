@@ -12,7 +12,8 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   opencv; pose/depth use `controlnet-aux` (OpenPose / MiDaS) with on-demand
   model downloads. Flux2-Klein ControlNet still falls back to ComfyUI — no
   vetted pipeline for Klein. SDXL and classic Flux ControlNet combine with
-  img2img/inpaint; Qwen ControlNet stays txt2img-only.
+  img2img/inpaint; Qwen plain Union CN is txt2img-only, while the InstantX
+  ControlNet-Inpainting checkpoint runs natively on inpaint graphs.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra
@@ -77,7 +78,9 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 - **SDXL ControlNet + img2img/inpaint is native** (plain and Union pipelines).
   Classic Flux ControlNet + img2img/inpaint is also native
   (`FluxControlNetImg2ImgPipeline` / `FluxControlNetInpaintPipeline`).
-  Qwen ControlNet + img2img stays on ComfyUI.
+  Qwen InstantX ControlNet-Inpainting is native on inpaint graphs
+  (`QwenImageControlNetInpaintPipeline`); plain Union CN + img2img stays on
+  ComfyUI.
 - **Final/Max enrich upscale is native:** `UpscaleModelLoader` / `ImageUpscaleWithModel`
   run through Spandrel (same `.pth` files as Comfy `models/upscale_models`), then optional
   `ImageScaleBy` / `ImageBlur` via Pillow — so enrich graphs no longer force a Comfy

@@ -219,9 +219,8 @@ def test_qwen_controlnet_union() -> None:
     _save("qwen_controlnet_union", image)
 
 
-def test_qwen_controlnet_inpaint_variant_rejected() -> None:
-    """Negative test: the mask-conditioned Qwen ControlNet-Inpainting
-    checkpoint MUST be rejected, not silently mis-loaded."""
+def test_qwen_controlnet_inpaint_variant_txt2img_rejected() -> None:
+    """Mask-conditioned Qwen ControlNet-Inpainting must not run as txt2img."""
     from app.pipeline import pipeline_holder
 
     control_src = OUT_DIR / "qwen_control_src_inpaint_variant.png"
@@ -248,14 +247,53 @@ def test_qwen_controlnet_inpaint_variant_rejected() -> None:
             controlnet_strength=0.8,
         )
     except RuntimeError as exc:
-        if "mask-conditioned" not in str(exc):
+        if "mask-conditioned" not in str(exc) and "Inpainting variant" not in str(exc):
             raise AssertionError(f"rejected for the wrong reason: {exc}") from exc
         print(f"  -> correctly rejected: {exc}")
         return
     raise AssertionError(
         "Qwen-Image-InstantX-ControlNet-Inpainting.safetensors was NOT "
-        "rejected — this should have raised RuntimeError"
+        "rejected on txt2img — this should have raised RuntimeError"
     )
+
+
+def test_qwen_controlnet_inpaint() -> None:
+    """Positive: mask-conditioned InstantX CN-Inpainting + init/mask."""
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    init = Image.new("RGB", (768, 768), (200, 180, 160))
+    init_src = OUT_DIR / "qwen_cn_inpaint_init.png"
+    init.save(init_src)
+    mask = Image.new("L", (768, 768), 0)
+    ImageDraw.Draw(mask).ellipse((240, 240, 528, 528), fill=255)
+    mask_src = OUT_DIR / "qwen_cn_inpaint_mask.png"
+    mask.save(mask_src)
+
+    image = pipeline_holder.generate_compiled_qwen(
+        model_path=_p("diffusion_models", "qwen_image_fp8_e4m3fn.safetensors"),
+        clip_name=_p("text_encoders", "qwen_2.5_vl_7b.safetensors"),
+        vae_name=_p("vae", "qwen_image_vae.safetensors"),
+        loras=[],
+        prompt="a glowing blue crystal",
+        negative_prompt="",
+        width=768,
+        height=768,
+        steps=8,
+        guidance_scale=2.5,
+        seed=42,
+        init_image_path=str(init_src),
+        mask_image_path=str(mask_src),
+        img2img_mode="inpaint",
+        denoise=0.9,
+        controlnet_path=_p(
+            "controlnet", "Qwen-Image-InstantX-ControlNet-Inpainting.safetensors"
+        ),
+        controlnet_image_path=str(init_src),
+        controlnet_preprocessor="none",
+        controlnet_strength=0.85,
+    )
+    _save("qwen_controlnet_inpaint", image)
 
 
 def test_flux_inpaint() -> None:
@@ -421,7 +459,10 @@ TESTS = {
     "flux_controlnet_union": test_flux_controlnet_union,
     "flux_controlnet_xlabs_rejected": test_flux_controlnet_xlabs_rejected,
     "qwen_controlnet_union": test_qwen_controlnet_union,
-    "qwen_controlnet_inpaint_variant_rejected": test_qwen_controlnet_inpaint_variant_rejected,
+    "qwen_controlnet_inpaint_variant_txt2img_rejected": (
+        test_qwen_controlnet_inpaint_variant_txt2img_rejected
+    ),
+    "qwen_controlnet_inpaint": test_qwen_controlnet_inpaint,
     "flux_inpaint": test_flux_inpaint,
     "qwen_inpaint": test_qwen_inpaint,
 }

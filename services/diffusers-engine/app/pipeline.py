@@ -4121,15 +4121,12 @@ class PipelineHolder:
         controlnet_strength: float = 1.0,
     ) -> Image.Image:
         """Native Qwen-Image from drop-in weights (+ optional VAE/Lightning LoRA).
-        ControlNet (Canny only, plain Union checkpoints only — the mask-
-        conditioned Inpainting-variant checkpoint is rejected, see
-        safetensors_peek.qwen_controlnet_expects_mask) takes a simpler code
-        path than the tuned main txt2img/img2img flow below: it skips the
-        group-offload/unet-resident VRAM choreography and the manual
-        encode_prompt embed path, calling the pipeline directly with a
-        prompt string instead. Slower, but it is the same proven from_pipe +
-        inspect.signature pattern already verified for the SDXL/Flux
-        ControlNet branches."""
+
+        ControlNet: plain Union/Canny via ``QwenImageControlNetPipeline``
+        (txt2img). Mask-conditioned InstantX ControlNet-Inpainting via
+        ``QwenImageControlNetInpaintPipeline`` when the graph is inpaint and
+        the checkpoint's ``controlnet_x_embedder`` is wider than ``img_in``.
+        """
         import torch
 
         from app.qwen_prompt import shape_qwen_prompts
@@ -4307,6 +4304,11 @@ class PipelineHolder:
         use_controlnet = (
             controlnet_path is not None and controlnet_image_path is not None
         )
+        strength = max(0.01, min(1.0, float(denoise)))
+        use_img2img = init_image_path is not None and strength < 0.999
+        use_inpaint = (
+            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
+        )
         if use_controlnet:
             from app.safetensors_peek import (
                 looks_like_diffusers_qwen_controlnet,
@@ -4322,18 +4324,25 @@ class PipelineHolder:
                     "different forward-hook architecture diffusers can't load "
                     "via from_single_file). Use ComfyUI for this checkpoint."
                 )
-            if qwen_controlnet_expects_mask(controlnet_path):
+            expects_mask = qwen_controlnet_expects_mask(controlnet_path)
+            if expects_mask and not use_inpaint:
                 raise RuntimeError(
-                    f"{Path(controlnet_path).name} looks like the "
-                    "mask-conditioned Qwen ControlNet-Inpainting variant (its "
-                    "controlnet_x_embedder takes 4 extra mask channels beyond "
-                    "img_in's width) — there's no verified pipeline call "
-                    "signature for feeding those extra channels yet. Only the "
-                    "plain Union/Canny Qwen ControlNet is supported; use "
-                    "ComfyUI for this checkpoint."
+                    f"{Path(controlnet_path).name} is the mask-conditioned Qwen "
+                    "ControlNet-Inpainting variant — use it with an inpaint "
+                    "graph (init + mask), not txt2img/img2img."
+                )
+            if use_img2img and not expects_mask:
+                raise RuntimeError(
+                    "Plain Qwen Union/Canny ControlNet does not support "
+                    "img2img/inpaint — use the InstantX ControlNet-Inpainting "
+                    "checkpoint with an inpaint graph, or ComfyUI."
                 )
             try:
-                from diffusers import QwenImageControlNetModel, QwenImageControlNetPipeline
+                from diffusers import (
+                    QwenImageControlNetInpaintPipeline,
+                    QwenImageControlNetModel,
+                    QwenImageControlNetPipeline,
+                )
             except ImportError as exc:
                 raise RuntimeError(
                     "This diffusers install has no QwenImageControlNetModel/"
@@ -4342,15 +4351,27 @@ class PipelineHolder:
                     "ComfyUI for this workflow."
                 ) from exc
 
-            control_image = Image.open(controlnet_image_path).convert("RGB")
             from app.controlnet_preprocess import apply_controlnet_preprocess
 
-            control_image = apply_controlnet_preprocess(
-                control_image, controlnet_preprocessor
-            )
-            control_image = control_image.resize(
-                (gen_width, gen_height), Image.Resampling.LANCZOS
-            )
+            if expects_mask:
+                # InstantX inpaint CN packs init latents + mask channels.
+                control_image = Image.open(init_image_path).convert("RGB")
+                control_mask = Image.open(mask_image_path).convert("L")
+                control_image = control_image.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                control_mask = control_mask.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+            else:
+                control_image = Image.open(controlnet_image_path).convert("RGB")
+                control_image = apply_controlnet_preprocess(
+                    control_image, controlnet_preprocessor
+                )
+                control_image = control_image.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                control_mask = None
 
             cn_key = f"qwen:{controlnet_path}"
             if self._controlnet_key != cn_key or self._controlnet_model is None:
@@ -4378,19 +4399,15 @@ class PipelineHolder:
                     except Exception as exc:
                         errors.append(f"from_pretrained: {exc}")
                 if model is None:
-                    # Not every diffusers release has QwenImageControlNetModel
-                    # in FromOriginalModelMixin's single-file whitelist — fall
-                    # back to a hub config + local weights (see
-                    # _load_via_hub_config_local_weights docstring). This is
-                    # the only Qwen ControlNet variant this code path reaches
-                    # (the mask-conditioned Inpainting variant is rejected
-                    # earlier), so the InstantX Union repo id is a solid
-                    # match, not a blind guess — the state_dict shape check
-                    # inside will still refuse rather than silently mismatch.
+                    hub_id = (
+                        "InstantX/Qwen-Image-ControlNet-Inpainting"
+                        if expects_mask
+                        else "InstantX/Qwen-Image-ControlNet-Union"
+                    )
                     try:
                         model = _load_via_hub_config_local_weights(
                             QwenImageControlNetModel,
-                            "InstantX/Qwen-Image-ControlNet-Union",
+                            hub_id,
                             str(cn_source),
                             torch.bfloat16,
                         )
@@ -4409,9 +4426,14 @@ class PipelineHolder:
                 f"{next(_te_before_cn.parameters()).dtype if _te_before_cn is not None else None}",
                 flush=True,
             )
-            cn_pipe = QwenImageControlNetPipeline.from_pipe(
-                pipe, controlnet=self._controlnet_model
-            )
+            if expects_mask:
+                cn_pipe = QwenImageControlNetInpaintPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            else:
+                cn_pipe = QwenImageControlNetPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
             self._restore_pipe_component_dtype(cn_pipe, dtype)
             _te_after_cn = getattr(cn_pipe, "text_encoder", None)
             print(
@@ -4508,6 +4530,8 @@ class PipelineHolder:
                 "num_inference_steps": step_count,
                 "generator": generator,
             }
+            if control_mask is not None:
+                cn_kwargs["control_mask"] = control_mask
             if prompt_embeds_mask is not None:
                 cn_kwargs["prompt_embeds_mask"] = prompt_embeds_mask
             if negative_prompt_embeds is not None:
@@ -4532,11 +4556,16 @@ class PipelineHolder:
                 if callback_on_step_end is not None:
                     cn_kwargs.setdefault("callback_on_step_end", callback_on_step_end)
 
+            mode_label = (
+                "controlnet+inpaint"
+                if expects_mask
+                else f"controlnet({controlnet_preprocessor})"
+            )
             print(
-                f"[diffusers] compiled-qwen controlnet({controlnet_preprocessor}) "
+                f"[diffusers] compiled-qwen {mode_label} "
                 f"model={Path(model_path).name} cn={Path(controlnet_path).name} "
                 f"{gen_width}x{gen_height} steps={step_count} cfg={cfg} "
-                f"strength={controlnet_strength:.2f}",
+                f"cn_strength={controlnet_strength:.2f}",
                 flush=True,
             )
             try:
@@ -4551,11 +4580,7 @@ class PipelineHolder:
             finally:
                 self._empty_cuda()
 
-        strength = max(0.01, min(1.0, float(denoise)))
-        use_img2img = init_image_path is not None and strength < 0.999
-        use_inpaint = (
-            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
-        )
+        # strength / use_img2img / use_inpaint already computed above for CN gating
         init_image: Image.Image | None = None
         mask_image: Image.Image | None = None
         if use_img2img:

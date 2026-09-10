@@ -99,11 +99,10 @@ def looks_like_diffusers_qwen_controlnet(path: str | Path) -> bool:
 
 def qwen_controlnet_expects_mask(path: str | Path) -> bool:
     """InstantX's Qwen-Image-ControlNet-Inpainting variant widens
-    controlnet_x_embedder to take 4 extra mask channels beyond img_in's
-    width (68 vs 64) — the diffusers call signature for feeding those extra
-    channels isn't verified here, so callers should reject this variant
-    rather than guess at how it gets filled. The plain Union/Canny variant
-    matches img_in's width exactly and needs no special handling."""
+    controlnet_x_embedder to take extra mask channels beyond img_in's
+    width (68 vs 64). Pair it with ``QwenImageControlNetInpaintPipeline``
+    (control_image + control_mask). The plain Union/Canny variant matches
+    img_in's width and uses ``QwenImageControlNetPipeline``."""
     header = read_safetensors_header(path)
     x_embed = header.get("controlnet_x_embedder.weight")
     img_in = header.get("img_in.weight")

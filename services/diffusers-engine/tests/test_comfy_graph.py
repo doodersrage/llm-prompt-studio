@@ -657,6 +657,33 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertFalse(result.supported)
         self.assertIn("img2img", result.reason.lower())
 
+    def test_compiles_qwen_controlnet_inpaint(self) -> None:
+        graph = self._controlnet_graph(
+            _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["22"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "vae": ["3", 0],
+                "pixels": ["20", 0],
+                "mask": ["21", 0],
+                "noise_mask": True,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        graph["8"]["inputs"]["negative"] = ["22", 1]
+        graph["8"]["inputs"]["latent_image"] = ["22", 2]
+        graph["8"]["inputs"]["denoise"] = 0.7
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertIsNotNone(result.compiled.controlnet)
+
     def test_compiles_qwen_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(
             _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
