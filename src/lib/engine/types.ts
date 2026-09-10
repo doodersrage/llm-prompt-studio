@@ -30,6 +30,8 @@ export type EngineQueueResult = {
   /** Backend that accepted the job (Diffusers-first may fall back to Comfy). */
   engineId?: EngineId;
   family?: string;
+  /** Why Diffusers declined before Comfy accepted (when engineId is comfyui). */
+  diffusersFallbackReason?: string;
   raw?: Record<string, unknown>;
   /** Call after gallery register + poll schedule. */
   releaseLiveSocket: () => void;

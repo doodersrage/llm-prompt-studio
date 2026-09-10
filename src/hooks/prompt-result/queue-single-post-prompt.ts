@@ -7,7 +7,7 @@ import {
   resolveSharedEffectiveSessionLoraStrengthOverrides,
 } from '@/lib/comfyui-settings';
 import { loadSettingsCache } from '@/lib/settings-cache';
-import { engineDisplayName, isCloudEngine } from '@/lib/engine/capabilities';
+import { engineDisplayName, isCloudEngine, parseEngineId } from '@/lib/engine/capabilities';
 import {
   loadEngineSettings,
   resolveCloudEngineHost,
@@ -15,6 +15,7 @@ import {
   resolveCloudQueueModel,
 } from '@/lib/engine-settings';
 import { workshopCropToApi } from '@/lib/diffusers-defaults';
+import { formatDiffusersQueueRouting } from '@/lib/diffusers-workflow-support';
 import { toastQueueOutcome } from '@/lib/app-toast';
 import { joinQueueStatusNotes } from '@/lib/queue-status-notes';
 import { dispatchWebhook } from '@/lib/webhook-settings';
@@ -24,6 +25,7 @@ import type {
   SendComfyUiOptions,
   TrackComfyUiJobInput,
 } from '@/hooks/prompt-result/comfy-ui-types';
+import type { EngineId } from '@/lib/engine/types';
 
 type QueueRuntime = Awaited<
   ReturnType<typeof import('@/lib/comfyui-runtime-for-model').resolveRuntimeForQueueAsync>
@@ -127,12 +129,22 @@ export async function postQueueSinglePrompt(input: {
       throw error;
     }
 
+    const actualEngineId: EngineId = parseEngineId(queued.engineId) ?? engineAdapter.id;
+    const routing = formatDiffusersQueueRouting({
+      preferredEngineId: engineAdapter.id,
+      actualEngineId,
+      workflowSource: queued.workflowSource,
+      family: queued.family,
+      diffusersFallbackReason: queued.diffusersFallbackReason,
+    });
+
     setComfyUiStatus(
       joinQueueStatusNotes(
         [
           `prompt_id ${queued.promptId}`,
           queueModel !== configModel ? `as ${queueModel}` : null,
           queued.workflowSource ? `workflow: ${queued.workflowSource}` : null,
+          routing.statusNote,
           negativePrompt ? 'with negative' : null,
           options?.identityLock && cloudEngine
             ? `identity lock · cloud face-ref ${Number(options.identityLockStrength ?? 0.5).toFixed(2)}`
@@ -161,16 +173,18 @@ export async function postQueueSinglePrompt(input: {
     );
     toastQueueOutcome({
       ok: true,
-      text: `Queued to ${engineDisplayName(engineAdapter.id)} · ${queued.promptId}`,
+      text: `Queued to ${engineDisplayName(actualEngineId)} · ${queued.promptId}`,
       href: '/gallery',
     });
 
     setComfyUiJob({
       promptId: queued.promptId,
       status: 'pending',
-      statusMessage: `Submitted to ${engineDisplayName(engineAdapter.id)}`,
+      statusMessage: routing.statusNote
+        ? `Submitted to ${engineDisplayName(actualEngineId)} · ${routing.statusNote}`
+        : `Submitted to ${engineDisplayName(actualEngineId)}`,
       comfyUrl: queued.engineUrl,
-      engineId: engineAdapter.id,
+      engineId: actualEngineId,
     });
 
     const trackInput: TrackComfyUiJobInput = {
@@ -183,7 +197,7 @@ export async function postQueueSinglePrompt(input: {
         previewComfyUrlHint ??
         (cloudEngine
           ? resolveCloudEngineHost(engineAdapter.id)
-          : engineAdapter.id === 'diffusers'
+          : actualEngineId === 'diffusers'
             ? 'http://127.0.0.1:8190'
             : 'http://127.0.0.1:8188'),
       clientId: queued.clientId,
@@ -205,7 +219,7 @@ export async function postQueueSinglePrompt(input: {
         : queueModel,
       sessionActiveLoraIds: resolveSharedEffectiveSessionLoraIds(queueModel),
       sessionLoraStrengthOverrides: resolveSharedEffectiveSessionLoraStrengthOverrides(queueModel),
-      engineId: engineAdapter.id,
+      engineId: actualEngineId,
     };
     trackComfyUiJob(trackInput);
     queued.releaseLiveSocket();

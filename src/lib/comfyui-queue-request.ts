@@ -24,6 +24,7 @@ export type ComfyUiQueueRequestResult = {
   workflowSource?: string;
   engineId?: import('./engine/types').EngineId;
   family?: string;
+  diffusersFallbackReason?: string;
   raw: Record<string, unknown>;
   /** Call after registerComfyGalleryJob + scheduleComfyGalleryPoll. */
   releaseLiveSocket: () => void;
@@ -119,6 +120,8 @@ export async function postComfyUiPrompt(
       workflowSource: typeof raw.workflowSource === 'string' ? raw.workflowSource : undefined,
       engineId: parseEngineId(raw.engineId),
       family: typeof raw.family === 'string' ? raw.family : undefined,
+      diffusersFallbackReason:
+        typeof raw.diffusersFallbackReason === 'string' ? raw.diffusersFallbackReason : undefined,
       raw,
       releaseLiveSocket,
     };

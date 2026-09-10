@@ -59,10 +59,12 @@ export type ComfyQueueResult = {
   error?: string;
   comfyUrl: string;
   clientId?: string;
-  workflowSource?: 'client' | 'env' | 'minimal' | 'diffusers-workflow';
+  workflowSource?: 'client' | 'env' | 'minimal' | 'diffusers-workflow' | 'comfy-fallback';
   /** Which backend actually accepted the job (Diffusers-first may fall back). */
   engineId?: import('./engine/types').EngineId;
   family?: string;
+  /** Why Diffusers classify/queue declined before Comfy accepted the job. */
+  diffusersFallbackReason?: string;
   replacements?: { positive: number; negative: number };
   /** How a multi-host pool pick routed this queue (when COMFYUI_POOL is set). */
   poolRouting?: ComfyUiPoolRoutingMeta;
@@ -758,6 +760,7 @@ export async function queuePromptToComfyUi(
         await import('./diffusers-client');
       const graph = activePromptBody.prompt as Record<string, unknown>;
       const classified = await classifyDiffusersWorkflow(graph, options?.diffusersUrl);
+      let diffusersFallbackReason: string | undefined;
       if (classified?.supported) {
         const { freeComfyUiMemoryServer } = await import('./comfyui-free-server');
         await freeComfyUiMemoryServer();
@@ -811,6 +814,8 @@ export async function queuePromptToComfyUi(
           });
           return failure;
         }
+        diffusersFallbackReason =
+          queued.error?.trim() || 'Diffusers queue failed after classify supported the graph.';
       } else if (!allowComfyFallback) {
         const failure: ComfyQueueResult = {
           ok: false,
@@ -829,7 +834,113 @@ export async function queuePromptToComfyUi(
           workflow: graph,
         });
         return failure;
+      } else {
+        const nodes =
+          classified?.unsupportedNodes && classified.unsupportedNodes.length > 0
+            ? ` Unsupported: ${classified.unsupportedNodes.slice(0, 4).join(', ')}${
+                classified.unsupportedNodes.length > 4 ? '…' : ''
+              }.`
+            : '';
+        diffusersFallbackReason = `${
+          classified?.reason || 'Workflow not natively supported by Diffusers.'
+        }${nodes}`;
       }
+
+      // Fall through to Comfy with an explicit fallback tag for UI honesty.
+      const comfyFallbackMeta = {
+        workflowSource: 'comfy-fallback' as const,
+        diffusersFallbackReason,
+        family: classified?.family,
+      };
+
+      const postPrompt = (apiUrl: string) =>
+        fetch(`${apiUrl}/prompt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            buildComfyPromptPostBody({
+              prompt: activePromptBody.prompt as Record<string, unknown>,
+              clientId,
+              front: activeRequest.front === true,
+            })
+          ),
+        });
+
+      let workflowResponse: Response;
+      try {
+        workflowResponse = await postPrompt(routedUrl);
+      } catch (error) {
+        const alt = resolveDeadHostFailoverUrl(routedUrl, runtime, error);
+        if (!alt) {
+          throw error;
+        }
+        routedUrl = alt;
+        poolRouting = { strategy: 'failover' };
+        workflowResponse = await postPrompt(routedUrl);
+      }
+
+      if (!workflowResponse.ok && isDeadHostHttpStatus(workflowResponse.status)) {
+        const alt = resolveDeadHostFailoverUrl(
+          routedUrl,
+          runtime,
+          workflowResponse.statusText,
+          workflowResponse.status
+        );
+        if (alt) {
+          routedUrl = alt;
+          poolRouting = { strategy: 'failover' };
+          workflowResponse = await postPrompt(routedUrl);
+        }
+      }
+
+      if (!workflowResponse.ok) {
+        const text = await workflowResponse.text();
+        const failure: ComfyQueueResult = {
+          ok: false,
+          error: formatComfyUiQueueValidationError(
+            text || `ComfyUI returned ${workflowResponse.status}`
+          ),
+          comfyUrl: routedUrl,
+          clientId,
+          ...comfyFallbackMeta,
+          engineId: 'comfyui',
+          replacements: activePromptBody.replacements,
+          poolRouting,
+        };
+        void dispatchServerQueuePost({
+          request: activeRequest,
+          result: failure,
+          workflow: graph,
+        });
+        return failure;
+      }
+
+      const data = (await workflowResponse.json()) as { prompt_id?: string };
+
+      writeQueueArtifact({
+        prompt: activeRequest.prompt,
+        negativePrompt: activeRequest.negativePrompt,
+        promptId: data.prompt_id,
+        comfyUrl: routedUrl,
+        workflow: graph,
+      });
+
+      const success: ComfyQueueResult = {
+        ok: true,
+        promptId: data.prompt_id,
+        comfyUrl: routedUrl,
+        clientId,
+        ...comfyFallbackMeta,
+        engineId: 'comfyui',
+        replacements: activePromptBody.replacements,
+        poolRouting,
+      };
+      void dispatchServerQueuePost({
+        request: activeRequest,
+        result: success,
+        workflow: graph,
+      });
+      return success;
     }
 
     const postPrompt = (apiUrl: string) =>

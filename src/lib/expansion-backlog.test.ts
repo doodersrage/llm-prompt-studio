@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { assessGalleryCapWarning } from './gallery-cap';
 import { clampScheduledBatchConfig, DEFAULT_SCHEDULED_BATCH } from './scheduled-batch';
-import { formatDiffusersClassifyHint } from './diffusers-workflow-support';
+import { formatDiffusersClassifyHint, formatDiffusersQueueRouting } from './diffusers-workflow-support';
 
 describe('assessGalleryCapWarning', () => {
   it('returns none below 85% of cap', () => {
@@ -72,5 +72,30 @@ describe('formatDiffusersClassifyHint', () => {
     });
     assert.equal(hint.mode, 'fallback');
     assert.match(hint.detail, /ControlNet/i);
+  });
+});
+
+describe('formatDiffusersQueueRouting', () => {
+  it('notes native Diffusers family', () => {
+    const routing = formatDiffusersQueueRouting({
+      preferredEngineId: 'diffusers',
+      actualEngineId: 'diffusers',
+      workflowSource: 'diffusers-workflow',
+      family: 'flux',
+    });
+    assert.equal(routing.engineLabel, 'diffusers');
+    assert.match(String(routing.statusNote), /native Diffusers · flux/);
+  });
+
+  it('labels Comfy fallback with reason', () => {
+    const routing = formatDiffusersQueueRouting({
+      preferredEngineId: 'diffusers',
+      actualEngineId: 'comfyui',
+      workflowSource: 'comfy-fallback',
+      diffusersFallbackReason: 'PuLID is not supported natively.',
+    });
+    assert.equal(routing.engineLabel, 'comfyui');
+    assert.match(String(routing.statusNote), /Diffusers → Comfy fallback/);
+    assert.match(String(routing.statusNote), /PuLID/);
   });
 });

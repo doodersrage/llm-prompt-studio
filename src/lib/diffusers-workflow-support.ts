@@ -35,3 +35,40 @@ export function formatDiffusersClassifyHint(
     detail: `${result.reason || 'Workflow not natively supported.'}${nodes}`,
   };
 }
+
+/** Queue toast / status when Diffusers-first may have fallen through to Comfy. */
+export function formatDiffusersQueueRouting(input: {
+  preferredEngineId?: string | null;
+  actualEngineId?: string | null;
+  workflowSource?: string | null;
+  family?: string | null;
+  diffusersFallbackReason?: string | null;
+}): { engineLabel: string; statusNote: string | null } {
+  const preferred = (input.preferredEngineId || '').trim();
+  const actual = (input.actualEngineId || preferred || '').trim();
+  const fallback =
+    actual === 'comfyui' &&
+    (preferred === 'diffusers' ||
+      input.workflowSource === 'comfy-fallback' ||
+      Boolean(input.diffusersFallbackReason?.trim()));
+
+  if (!fallback) {
+    const family = input.family?.trim();
+    return {
+      engineLabel: actual || preferred || 'engine',
+      statusNote:
+        actual === 'diffusers' && family
+          ? `native Diffusers · ${family}`
+          : actual === 'diffusers'
+            ? 'native Diffusers'
+            : null,
+    };
+  }
+
+  const reason = (input.diffusersFallbackReason || '').trim();
+  const short = reason.length > 120 ? `${reason.slice(0, 117).trimEnd()}…` : reason;
+  return {
+    engineLabel: 'comfyui',
+    statusNote: short ? `Diffusers → Comfy fallback · ${short}` : 'Diffusers → Comfy fallback',
+  };
+}

@@ -152,6 +152,10 @@ export const diffusersEngineAdapter: EngineAdapter = {
           family: typeof raw.family === 'string' ? raw.family : undefined,
           workflowSource:
             typeof raw.workflowSource === 'string' ? raw.workflowSource : 'diffusers-workflow',
+          diffusersFallbackReason:
+            typeof raw.diffusersFallbackReason === 'string'
+              ? raw.diffusersFallbackReason
+              : undefined,
           raw,
           releaseLiveSocket: () => undefined,
         };
