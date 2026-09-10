@@ -80,7 +80,7 @@ def apply_output_post(
         percent = max(1, min(300, percent))
         logger.info("Output sharpen UnsharpMask percent=%d", percent)
         out = out.filter(
-            ImageFilter.UnsharpMask(radius=2, percent=percent, threshold=2)
+            ImageFilter.UnsharpMask(radius=2, percent=percent, threshold=0)
         )
 
     if scale is not None and float(scale) > 1.001:

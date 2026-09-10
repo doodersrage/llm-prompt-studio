@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: GPU smoke coverage for FluxGuidance, Klein ReferenceLatent edit, Klein inpaint, and Qwen Image Edit (`python scripts/gpu_smoke_test.py new`).
 - Diffusers engine: finishing soft stills gaps — `ImageSharpen`, `SaveImageAdvanced`/`SaveImageExtended`, basic `IPAdapter` (not only Advanced), single-image Edit-Plus × inpaint (multi-ref Edit-Plus+inpaint stays Comfy). Hard non-goals remain: PuLID, FaceDetailer, Klein ControlNet / strength img2img, Qwen Edit+ControlNet, LatentUpscale multi-pass, SD3/Boogu/GGUF/UltimateSDUpscale, Dynamic VRAM.
 - Diffusers engine: collect `LoraLoader|pysssss` (and other `LoraLoader|*` UI variants); treat `LoadImageOutput` like LoadImage; allow `MarkdownNote` / `Reroute` passthrough.
 - Diffusers engine: allow `ImageScale` / `ResizeImage` on ref paths (Studio Compose LoadImage→scale→VAEEncode) and passthrough `Note` / `ConditioningZeroOut` (empty negative).

@@ -199,13 +199,18 @@ torch/CUDA and real checkpoints, so it can't run in CI or a no-GPU sandbox) — 
 calls `app.pipeline.pipeline_holder` directly with real assets from
 `$COMFYUI_ROOT/models`, the same functions `workflow_exec.py` calls, and writes
 PNGs to `outputs/smoke/` for visual review. Covers SDXL/Flux/Qwen ControlNet
-(including the Union-checkpoint routing and the XLabs/mask-variant rejections)
-and Flux/Qwen inpaint:
+(including the Union-checkpoint routing and the XLabs/mask-variant rejections),
+Flux/Qwen inpaint, plus newer stills-parity paths (`flux_guidance`,
+`klein_reference_edit`, `klein_inpaint`, `qwen_image_edit`):
 
 ```bash
 "$VENV/bin/python" scripts/gpu_smoke_test.py                              # everything
 "$VENV/bin/python" scripts/gpu_smoke_test.py qwen_controlnet_union        # just one
+"$VENV/bin/python" scripts/gpu_smoke_test.py new                          # newer parity group
+"$VENV/bin/python" scripts/gpu_smoke_test.py --list                       # names + groups
 ```
+
+Free Comfy VRAM before long runs (11GB+ resident Comfy will OOM Klein/Qwen edit).
 
 With `COMFYUI_ROOT` set, a miss on Hugging Face will use local Comfy weights. Preferred order for studio/Flux aliases:
 

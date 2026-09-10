@@ -16,6 +16,13 @@ run a subset, e.g. just the newest Qwen ControlNet work:
 
     python scripts/gpu_smoke_test.py qwen_controlnet_union qwen_controlnet_inpaint_variant_txt2img_rejected
 
+Or the newer stills-parity group (FluxGuidance / Klein ReferenceLatent /
+Klein inpaint / Qwen Image Edit):
+
+    python scripts/gpu_smoke_test.py new
+
+List names with ``--list``.
+
 Each test calls app.pipeline.pipeline_holder directly — the same functions
 workflow_exec.py calls — loads real checkpoints from $COMFYUI_ROOT/models
 (default /opt/comfyui/models), runs a short generation (low step count,
@@ -452,6 +459,182 @@ def test_qwen_inpaint() -> None:
     _save("qwen_inpaint", image)
 
 
+def _prefer(*rel_candidates: tuple[str, ...]) -> str:
+    """First existing path under MODELS; raise with all tried names."""
+    tried: list[str] = []
+    for parts in rel_candidates:
+        path = MODELS.joinpath(*parts)
+        tried.append(str(path))
+        if path.is_file():
+            return str(path)
+    raise FileNotFoundError(
+        "None of the candidate checkpoints exist:\n  " + "\n  ".join(tried)
+    )
+
+
+def test_flux_guidance() -> None:
+    """Classic FLUX.1 with embedded guidance_scale (FluxGuidance → Diffusers).
+
+    Studio UltraReal maps sidebar CFG into FluxGuidance and forces KSampler.cfg=1;
+    here we pass guidance_scale=2.5 directly the same way workflow_exec does.
+    """
+    from app.pipeline import pipeline_holder
+
+    image = pipeline_holder.generate_compiled_flux(
+        unet_path=_prefer(
+            ("diffusion_models", "flux1-dev.safetensors"),
+            ("diffusion_models", "ultrarealFineTune_v4.safetensors"),
+        ),
+        clip_name=_p("text_encoders", "clip_l.safetensors"),
+        clip2_name=_prefer(
+            ("text_encoders", "t5xxl_fp8_e4m3fn_scaled.safetensors"),
+            ("text_encoders", "t5xxl_fp16.safetensors"),
+        ),
+        clip_type="flux",
+        vae_name=_p("vae", "ae.safetensors"),
+        loras=[],
+        prompt="a simple red cube on a white background, studio lighting",
+        negative_prompt="",
+        width=512,
+        height=512,
+        steps=8,
+        guidance_scale=2.5,
+        seed=42,
+        max_shift=1.15,
+        base_shift=0.5,
+    )
+    _save("flux_guidance", image)
+
+
+def test_klein_reference_edit() -> None:
+    """Flux2-Klein ReferenceLatent instruction edit (Compose/Refine).
+
+    Passes ``reference_image_paths`` into Flux2KleinPipeline(image=…) — not
+    strength img2img. Prefers distilled fp8 for VRAM; steps forced to 4/cfg 1.
+    """
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    ref = Image.new("RGB", (512, 512), (40, 120, 200))
+    ImageDraw.Draw(ref).rectangle((120, 120, 392, 392), fill=(220, 60, 40))
+    ref_src = OUT_DIR / "klein_ref_figure1.png"
+    ref.save(ref_src)
+
+    image = pipeline_holder.generate_compiled_flux(
+        unet_path=_prefer(
+            ("diffusion_models", "flux-2-klein-9b-distilled.safetensors"),
+            ("diffusion_models", "flux-2-klein-9b-fp8.safetensors"),
+            ("diffusion_models", "flux-2-klein-4b-fp8.safetensors"),
+        ),
+        clip_name=_prefer(
+            ("text_encoders", "flux2-klein-9b-base.safetensors"),
+            ("text_encoders", "qwen_3_8b_fp8mixed.safetensors"),
+            ("text_encoders", "qwen_3_4b.safetensors"),
+        ),
+        clip2_name=None,
+        clip_type="flux2",
+        vae_name=_prefer(
+            ("vae", "flux2-vae.safetensors"),
+            ("vae", "FLUX.2-klein-9B.safetensors"),
+        ),
+        loras=[],
+        prompt="replace the red square with a glowing blue crystal, keep the blue background",
+        negative_prompt="",
+        width=512,
+        height=512,
+        steps=4,
+        guidance_scale=1.0,
+        seed=7,
+        max_shift=1.15,
+        base_shift=0.5,
+        reference_image_paths=[str(ref_src)],
+    )
+    _save("klein_reference_edit", image)
+
+
+def test_qwen_image_edit() -> None:
+    """Qwen Image Edit single-ref (TextEncodeQwenImageEdit → EditPipeline)."""
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    ref = Image.new("RGB", (768, 768), (180, 160, 140))
+    ImageDraw.Draw(ref).ellipse((200, 200, 568, 568), fill=(60, 100, 180))
+    ref_src = OUT_DIR / "qwen_edit_ref.png"
+    ref.save(ref_src)
+
+    image = pipeline_holder.generate_compiled_qwen(
+        model_path=_prefer(
+            ("diffusion_models", "qwen_image_edit_2509_fp8_e4m3fn.safetensors"),
+            ("diffusion_models", "qwen_image_edit_2511_bf16.safetensors"),
+            ("diffusion_models", "qwen_image_edit_2509_bf16.safetensors"),
+        ),
+        clip_name=_prefer(
+            ("text_encoders", "qwen_2.5_vl_7b.safetensors"),
+            ("text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"),
+        ),
+        vae_name=_p("vae", "qwen_image_vae.safetensors"),
+        loras=[],
+        prompt="make the circle a glowing neon green ring",
+        negative_prompt="",
+        width=768,
+        height=768,
+        steps=8,
+        guidance_scale=2.5,
+        seed=11,
+        qwen_edit_mode="edit",
+        qwen_edit_image_paths=[str(ref_src)],
+    )
+    _save("qwen_image_edit", image)
+
+
+def test_klein_inpaint() -> None:
+    """Flux2-Klein inpaint via Flux2KleinInpaintPipeline."""
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    init = Image.new("RGB", (512, 512), (200, 180, 160))
+    init_src = OUT_DIR / "klein_inpaint_init.png"
+    init.save(init_src)
+    mask = Image.new("L", (512, 512), 0)
+    ImageDraw.Draw(mask).ellipse((160, 160, 352, 352), fill=255)
+    mask_src = OUT_DIR / "klein_inpaint_mask.png"
+    mask.save(mask_src)
+
+    image = pipeline_holder.generate_compiled_flux(
+        unet_path=_prefer(
+            ("diffusion_models", "flux-2-klein-9b-distilled.safetensors"),
+            ("diffusion_models", "flux-2-klein-9b-fp8.safetensors"),
+            ("diffusion_models", "flux-2-klein-4b-fp8.safetensors"),
+        ),
+        clip_name=_prefer(
+            ("text_encoders", "flux2-klein-9b-base.safetensors"),
+            ("text_encoders", "qwen_3_8b_fp8mixed.safetensors"),
+            ("text_encoders", "qwen_3_4b.safetensors"),
+        ),
+        clip2_name=None,
+        clip_type="flux2",
+        vae_name=_prefer(
+            ("vae", "flux2-vae.safetensors"),
+            ("vae", "FLUX.2-klein-9B.safetensors"),
+        ),
+        loras=[],
+        prompt="a glowing blue crystal",
+        negative_prompt="",
+        width=512,
+        height=512,
+        steps=4,
+        guidance_scale=1.0,
+        seed=42,
+        max_shift=1.15,
+        base_shift=0.5,
+        init_image_path=str(init_src),
+        mask_image_path=str(mask_src),
+        img2img_mode="inpaint",
+        denoise=0.85,
+    )
+    _save("klein_inpaint", image)
+
+
 TESTS = {
     "sdxl_controlnet_union": test_sdxl_controlnet_union,
     "sdxl_controlnet_img2img": test_sdxl_controlnet_img2img,
@@ -465,15 +648,48 @@ TESTS = {
     "qwen_controlnet_inpaint": test_qwen_controlnet_inpaint,
     "flux_inpaint": test_flux_inpaint,
     "qwen_inpaint": test_qwen_inpaint,
+    # Newer stills-parity paths (ReferenceLatent / FluxGuidance / Edit / Klein).
+    "flux_guidance": test_flux_guidance,
+    "klein_reference_edit": test_klein_reference_edit,
+    "klein_inpaint": test_klein_inpaint,
+    "qwen_image_edit": test_qwen_image_edit,
+}
+
+# Convenience alias groups for ``python scripts/gpu_smoke_test.py new``.
+TEST_GROUPS = {
+    "new": [
+        "flux_guidance",
+        "klein_reference_edit",
+        "klein_inpaint",
+        "qwen_image_edit",
+    ],
 }
 
 
 def main() -> int:
-    requested = sys.argv[1:] or list(TESTS.keys())
+    raw = sys.argv[1:]
+    if raw == ["--list"]:
+        print("Tests:")
+        for name in TESTS:
+            print(f"  {name}")
+        print("Groups:")
+        for name, members in TEST_GROUPS.items():
+            print(f"  {name}: {', '.join(members)}")
+        return 0
+
+    requested: list[str] = []
+    for arg in raw or list(TESTS.keys()):
+        if arg in TEST_GROUPS:
+            requested.extend(TEST_GROUPS[arg])
+        else:
+            requested.append(arg)
+
     unknown = [name for name in requested if name not in TESTS]
     if unknown:
         print(
-            f"Unknown test(s): {unknown}\nAvailable: {list(TESTS.keys())}",
+            f"Unknown test(s): {unknown}\n"
+            f"Available: {list(TESTS.keys())}\n"
+            f"Groups: {list(TEST_GROUPS.keys())}",
             file=sys.stderr,
         )
         return 2

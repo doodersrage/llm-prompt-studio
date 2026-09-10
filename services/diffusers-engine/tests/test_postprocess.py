@@ -45,6 +45,18 @@ class PostprocessTests(unittest.TestCase):
         )
         self.assertEqual(out.size, (128, 128))
 
+    def test_sharpen_changes_pixels_keeps_size(self) -> None:
+        # Soft gradient so UnsharpMask has midtones to amplify (not flat tiles).
+        img = Image.new("RGB", (64, 64))
+        px = img.load()
+        for y in range(64):
+            for x in range(64):
+                v = int(255 * x / 63)
+                px[x, y] = (v, v, v)
+        out = apply_output_post(img, sharpen=1.5)
+        self.assertEqual(out.size, (64, 64))
+        self.assertNotEqual(img.tobytes(), out.tobytes())
+
 
 if __name__ == "__main__":
     unittest.main()
