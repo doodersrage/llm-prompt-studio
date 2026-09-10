@@ -120,6 +120,16 @@ def _materialize_meta_buffers(model: Any) -> int:
     return fixed
 
 
+def dequantize_comfy_fp8_weight(weight: Any, scale: Any, *, dtype: Any) -> Any:
+    """Expand one Comfy fp8-scaled weight: ``weight.to(fp32) * scale → dtype``."""
+    import torch
+
+    dequant = weight.to(dtype=torch.float32) * scale.to(dtype=torch.float32)
+    if dtype is not None:
+        return dequant.to(dtype=dtype)
+    return dequant
+
+
 def load_qwen25_vl_from_single_file(
     path: str | Path,
     *,
@@ -127,6 +137,9 @@ def load_qwen25_vl_from_single_file(
     dtype: Any,
 ) -> Any:
     """Load Comfy qwen_2.5_vl_*.safetensors into Qwen2_5_VLForConditionalGeneration.
+
+    Accepts bf16 drop-ins and Comfy ``*_fp8_scaled.safetensors`` (dequantized to
+    ``dtype`` via per-layer ``.scale_weight`` — activation ``.scale_input`` is ignored).
 
     Uses meta+assign so we never hold a hub TE shell *and* the drop-in weights
     at once (that previously peaked ~32GB host RAM and thrashed into swap).
@@ -137,24 +150,51 @@ def load_qwen25_vl_from_single_file(
 
     path = Path(path)
     config_dir = Path(config_dir)
-    if is_fp8_scaled_name(path.name):
-        raise RuntimeError(
-            f"{path.name} is Comfy fp8-scaled (scale_weight tensors); "
-            "Diffusers needs qwen_2.5_vl_7b.safetensors (bf16) instead."
-        )
+    fp8_scaled = is_fp8_scaled_name(path.name)
 
     config = Qwen2_5_VLConfig.from_pretrained(str(config_dir), local_files_only=True)
-    print(f"[diffusers] Qwen TE meta+assign from {path.name}…", flush=True)
+    print(
+        f"[diffusers] Qwen TE meta+assign from {path.name}"
+        + (" (fp8-scaled → dequant)" if fp8_scaled else "")
+        + "…",
+        flush=True,
+    )
 
     # One weight copy via safe_open (mmap-backed reads), not load_file + hub shell.
     state: dict[str, Any] = {}
+    dequantized = 0
     with safe_open(str(path), framework="pt", device="cpu") as handle:
-        for key in handle.keys():
+        keys = list(handle.keys())
+        scales: dict[str, Any] = {}
+        if fp8_scaled:
+            for key in keys:
+                if key.endswith(".scale_weight"):
+                    scales[key[: -len(".scale_weight")]] = handle.get_tensor(key)
+        for key in keys:
             if key.endswith(".comfy_quant") or "weight_scale" in key:
                 continue
             if key.endswith(".scale_weight") or key.endswith(".scale_input"):
                 continue
-            state[key] = handle.get_tensor(key)
+            if "scaled_fp8" in key:
+                continue
+            tensor = handle.get_tensor(key)
+            if fp8_scaled and key.endswith(".weight"):
+                scale = scales.get(key[: -len(".weight")])
+                if scale is not None:
+                    tensor = dequantize_comfy_fp8_weight(tensor, scale, dtype=dtype)
+                    dequantized += 1
+            state[key] = tensor
+    if fp8_scaled:
+        print(
+            f"[diffusers] Qwen TE dequantized {dequantized} fp8 layers "
+            f"({len(scales)} scale_weight entries)",
+            flush=True,
+        )
+        if dequantized < 100:
+            raise RuntimeError(
+                f"{path.name} looked fp8-scaled but only dequantized {dequantized} "
+                "layers — expected Comfy .weight + .scale_weight pairs."
+            )
     state = remap_qwen25_vl_comfy_keys(state)
 
     with torch.device("meta"):

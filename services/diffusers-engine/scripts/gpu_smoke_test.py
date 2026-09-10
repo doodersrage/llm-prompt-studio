@@ -186,14 +186,10 @@ def test_flux_controlnet_xlabs_rejected() -> None:
     )
 
 
-# All Qwen tests below load qwen_2.5_vl_7b.safetensors (bf16), not the
-# fp8-scaled file. load_qwen25_vl_from_single_file() explicitly rejects
-# *_fp8_scaled.safetensors (it carries scale_weight tensors the drop-in
-# loader doesn't unpack) and _load_qwen_pipeline() then falls back to
-# downloading a fresh bf16 copy from the HF hub — pointless when a local
-# bf16 file already exists, and the extra download pushed VRAM to the edge
-# during earlier testing. Teaching the drop-in loader to read Comfy's
-# fp8-scaled format directly is tracked separately, not done here.
+# Qwen smoke tests prefer qwen_2.5_vl_7b.safetensors (bf16) for fidelity.
+# Comfy *_fp8_scaled TEs now dequantize via .scale_weight in
+# load_qwen25_vl_from_single_file(); point clip_name at the fp8 file to exercise
+# that path without a hub bf16 re-download.
 
 
 def test_qwen_controlnet_union() -> None:

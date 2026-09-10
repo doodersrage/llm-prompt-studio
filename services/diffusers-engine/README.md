@@ -53,18 +53,14 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
     into that architecture — no multi-GB re-download — then verifies the state dict
     actually matches (no missing/unexpected keys) before using it, refusing rather than
     silently loading a mismatched model if it doesn't.
-- **Qwen text encoder: needs the bf16 file, not Comfy's fp8-scaled one.**
-  `load_qwen25_vl_from_single_file()` explicitly rejects `*_fp8_scaled.safetensors`
-  (it carries `scale_weight`/`scale_input` tensors the drop-in loader doesn't
-  unpack) and `_load_qwen_pipeline()` then falls back to downloading a fresh
-  bf16 copy from the HF hub instead — slow, and it pushes VRAM close to the
-  edge on a 24GB card even though a local bf16 file usually already exists
-  (`qwen_2.5_vl_7b.safetensors`, ~16.6GB, vs. `qwen_2.5_vl_7b_fp8_scaled.safetensors`,
-  ~9.4GB). If your CLIPLoader node points at the fp8-scaled file, point it at
-  the bf16 one instead — same directory, drop-in loads it directly with no
-  re-download. Teaching the drop-in loader to read Comfy's fp8-scaled format
-  natively (so the smaller file works too) is a real improvement but hasn't
-  been done yet.
+- **Qwen text encoder: bf16 preferred; Comfy ``*_fp8_scaled`` also loads.**
+  `load_qwen25_vl_from_single_file()` dequantizes Comfy fp8-scaled drop-ins
+  (`qwen_2.5_vl_7b_fp8_scaled.safetensors`, ~9.4GB) via per-layer `.scale_weight`
+  into the pipeline dtype, so CLIPLoader can point at the smaller file without
+  forcing a hub bf16 re-download. Prefer the local bf16 file
+  (`qwen_2.5_vl_7b.safetensors`, ~16.6GB) when both exist — slightly higher
+  fidelity, and inventory still lists bf16 first. Flux T5 `*_fp8_scaled` still
+  uses the hub TE2 path (not yet dequantized the same way).
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint stays unsupported — no mask-capable pipeline for it.
 - **Still not attempted: IP-Adapter/InstantID/PuLID identity lock, FaceDetailer.** Both are
