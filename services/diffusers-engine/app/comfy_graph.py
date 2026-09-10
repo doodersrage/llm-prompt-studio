@@ -19,6 +19,21 @@ _LORA_OK = frozenset(
 _IMG2IMG_OK = frozenset({"LoadImage", "VAEEncode"})
 _INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning", "VAEEncode"})
 
+# Native ControlNet: SDXL, classic Flux (not Flux2-Klein), and Qwen (plain
+# Union/Canny checkpoints only, not the mask-conditioned Inpainting variant —
+# see safetensors_peek.qwen_controlnet_expects_mask). Only Canny has a local
+# preprocessor (opencv); pose/depth graphs still fall back to ComfyUI because
+# DWPreprocessor / DepthAnythingV2Preprocessor need extra models we don't ship.
+_CONTROLNET_PREPROCESSOR_OK = frozenset({"CannyEdgePreprocessor"})
+_CONTROLNET_OK = frozenset(
+    {
+        "ControlNetLoader",
+        "ControlNetApply",
+        "ControlNetApplyAdvanced",
+        *_CONTROLNET_PREPROCESSOR_OK,
+    }
+)
+
 _SDXL_OK = frozenset(
     {
         "CheckpointLoaderSimple",
@@ -27,6 +42,7 @@ _SDXL_OK = frozenset(
         *_LORA_OK,
         *_IMG2IMG_OK,
         *_INPAINT_OK,
+        *_CONTROLNET_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -45,6 +61,7 @@ _FLUX_OK = frozenset(
         *_LORA_OK,
         *_IMG2IMG_OK,
         *_INPAINT_OK,
+        *_CONTROLNET_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -63,6 +80,8 @@ _QWEN_OK = frozenset(
         "ModelSamplingAuraFlow",
         *_LORA_OK,
         *_IMG2IMG_OK,
+        *_INPAINT_OK,
+        *_CONTROLNET_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "EmptySD3LatentImage",
@@ -74,10 +93,7 @@ _QWEN_OK = frozenset(
 
 _ALWAYS_UNSUPPORTED = frozenset(
     {
-        "ControlNetLoader",
         "DiffControlNetLoader",
-        "ControlNetApply",
-        "ControlNetApplyAdvanced",
         "IPAdapterModelLoader",
         "IPAdapterAdvanced",
         "InstantIDModelLoader",
@@ -90,7 +106,6 @@ _ALWAYS_UNSUPPORTED = frozenset(
         "HunyuanImageToVideo",
         "TextEncodeQwenImageEdit",
         "TextEncodeQwenImageEditPlus",
-        "CannyEdgePreprocessor",
         "DWPreprocessor",
         "DepthAnythingV2Preprocessor",
     }
@@ -129,6 +144,10 @@ class CompiledWorkflow:
     init_image: str | None = None
     mask_image: str | None = None
     img2img_mode: Literal["txt2img", "img2img", "inpaint"] = "txt2img"
+    controlnet: str | None = None
+    controlnet_image: str | None = None
+    controlnet_preprocessor: Literal["none", "canny"] = "none"
+    controlnet_strength: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -217,6 +236,14 @@ def detect_family(nodes: dict[str, dict[str, Any]]) -> Family:
     return "unsupported"
 
 
+def _is_flux_klein(clip_type: str | None, unet: str | None) -> bool:
+    """Heuristic match for Flux2-Klein — mirrors dropin_loaders.is_flux_klein_unet
+    without importing torch/safetensors (comfy_graph stays dependency-free)."""
+    if (clip_type or "").lower() == "flux2":
+        return True
+    return "klein" in (unet or "").lower()
+
+
 def _collect_loras(nodes: dict[str, dict[str, Any]]) -> list[CompiledLora]:
     loras: list[CompiledLora] = []
     for node in nodes.values():
@@ -301,6 +328,63 @@ def _trace_img2img_assets(
     return None, None, "txt2img"
 
 
+def _resolve_conditioning_text(
+    nodes: dict[str, dict[str, Any]], node_id: str | None, branch: str
+) -> str:
+    """Follow CLIPTextEncode.text through ControlNetApply(Advanced) nodes,
+    which pass conditioning through rather than encode it themselves."""
+    node = nodes.get(node_id or "")
+    if not node:
+        return ""
+    ctype = node["class_type"]
+    if ctype == "CLIPTextEncode":
+        return _as_str(node["inputs"].get("text"))
+    if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
+        inner_id = _link_id(node["inputs"].get(branch))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
+    return ""
+
+
+def _trace_controlnet(
+    nodes: dict[str, dict[str, Any]],
+) -> tuple[str, str, Literal["none", "canny"], float] | None:
+    """Find a single ControlNetApply(Advanced) node and resolve its
+    control_net checkpoint + source image (through CannyEdgePreprocessor when
+    present). Returns None when no ControlNet node exists in the graph."""
+    apply_node = next(
+        (
+            n
+            for n in nodes.values()
+            if n["class_type"] in ("ControlNetApply", "ControlNetApplyAdvanced")
+        ),
+        None,
+    )
+    if apply_node is None:
+        return None
+    inputs = apply_node["inputs"]
+
+    loader = nodes.get(_link_id(inputs.get("control_net")) or "", {})
+    if loader.get("class_type") != "ControlNetLoader":
+        return None
+    controlnet_name = _as_str(loader["inputs"].get("control_net_name")).strip()
+    if not controlnet_name or controlnet_name.startswith("{{"):
+        return None
+
+    image_id = _link_id(inputs.get("image"))
+    image_node = nodes.get(image_id or "", {})
+    preprocessor: Literal["none", "canny"] = "none"
+    if image_node.get("class_type") == "CannyEdgePreprocessor":
+        preprocessor = "canny"
+        image_id = _link_id(image_node["inputs"].get("image"))
+
+    control_image = _resolve_load_image_name(nodes, image_id)
+    if not control_image:
+        return None
+
+    strength = _as_float(inputs.get("strength"), 1.0)
+    return controlnet_name, control_image, preprocessor, strength
+
+
 def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     nodes = _nodes(graph)
     if not nodes:
@@ -352,8 +436,8 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     latent = nodes.get(latent_id or "", {})
     pos_id = _link_id(sampler["inputs"].get("positive"))
     neg_id = _link_id(sampler["inputs"].get("negative"))
-    pos = nodes.get(pos_id or "", {})
-    neg = nodes.get(neg_id or "", {})
+    positive_text = _resolve_conditioning_text(nodes, pos_id, "positive")
+    negative_text = _resolve_conditioning_text(nodes, neg_id, "negative")
 
     width = _as_int(latent.get("inputs", {}).get("width"), 1024)
     height = _as_int(latent.get("inputs", {}).get("height"), 1024)
@@ -367,12 +451,6 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             supported=False,
             family=family,
             reason="img2img/inpaint denoise < 1 requires LoadImage → VAEEncode (or inpaint conditioning).",
-        )
-    if img2img_mode == "inpaint" and family != "sdxl":
-        return ClassifyResult(
-            supported=False,
-            family=family,
-            reason="Native inpaint is supported for SDXL graphs only.",
         )
 
     checkpoint = None
@@ -419,11 +497,62 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=f"{family} workflow missing UNETLoader/checkpoint.",
         )
+    if (
+        img2img_mode == "inpaint"
+        and family == "flux"
+        and _is_flux_klein(clip_type, unet)
+    ):
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="Flux2-Klein inpaint has no mask-capable pipeline yet — use ComfyUI.",
+        )
+
+    controlnet_info = _trace_controlnet(nodes)
+    has_controlnet_node = any(
+        n["class_type"] in ("ControlNetApply", "ControlNetApplyAdvanced")
+        for n in nodes.values()
+    )
+    if has_controlnet_node and controlnet_info is None:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "ControlNet present but could not resolve control_net_name / "
+                "source image (only ControlNetLoader → [CannyEdgePreprocessor] "
+                "→ LoadImage chains are supported)."
+            ),
+        )
+    if controlnet_info is not None and family not in ("sdxl", "flux", "qwen"):
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="Native ControlNet is supported for SDXL, Flux, and Qwen graphs only.",
+        )
+    if (
+        controlnet_info is not None
+        and family == "flux"
+        and _is_flux_klein(clip_type, unet)
+    ):
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
+        )
+    if controlnet_info is not None and img2img_mode != "txt2img":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="ControlNet combined with img2img/inpaint is not supported yet.",
+        )
+    controlnet_name, controlnet_image, controlnet_preprocessor, controlnet_strength = (
+        controlnet_info if controlnet_info is not None else (None, None, "none", 1.0)
+    )
 
     compiled = CompiledWorkflow(
         family=family,
-        positive=_as_str(pos.get("inputs", {}).get("text")),
-        negative=_as_str(neg.get("inputs", {}).get("text")),
+        positive=positive_text,
+        negative=negative_text,
         width=max(64, width),
         height=max(64, height),
         steps=max(1, steps),
@@ -445,6 +574,10 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         init_image=init_image,
         mask_image=mask_image,
         img2img_mode=img2img_mode if denoise < 0.999 else "txt2img",
+        controlnet=controlnet_name,
+        controlnet_image=controlnet_image,
+        controlnet_preprocessor=controlnet_preprocessor,
+        controlnet_strength=controlnet_strength,
     )
     return ClassifyResult(
         supported=True,

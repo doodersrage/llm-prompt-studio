@@ -188,7 +188,8 @@ class AssetInventoryTests(unittest.TestCase):
             te = root / "models" / "text_encoders"
             vae = root / "models" / "vae"
             lora = root / "models" / "loras"
-            for path in (ckpt, unet, te, vae, lora):
+            controlnet = root / "models" / "controlnet"
+            for path in (ckpt, unet, te, vae, lora, controlnet):
                 path.mkdir(parents=True)
             (ckpt / "RealVisXL_V5.0_fp16.safetensors").write_bytes(b"x")
             (ckpt / "Qwen-Rapid-AIO-SFW-v23.safetensors").write_bytes(b"x")
@@ -197,6 +198,7 @@ class AssetInventoryTests(unittest.TestCase):
             (te / "clip_l.safetensors").write_bytes(b"x")
             (vae / "ae.safetensors").write_bytes(b"x")
             (lora / "detail.safetensors").write_bytes(b"x")
+            (controlnet / "control-canny-sdxl.safetensors").write_bytes(b"x")
 
             with mock.patch.dict(os.environ, {"COMFYUI_ROOT": str(root)}, clear=False):
                 inventory = list_asset_inventory()
@@ -224,6 +226,16 @@ class AssetInventoryTests(unittest.TestCase):
                 resolved = resolve_asset_file("ae.safetensors", "vaes")
                 self.assertIsNotNone(resolved)
                 self.assertEqual(resolved.name, "ae.safetensors")
+                self.assertTrue(
+                    any(
+                        item.id == "control-canny-sdxl.safetensors"
+                        for item in inventory["controlnets"]
+                    )
+                )
+                cn_resolved = resolve_asset_file(
+                    "control-canny-sdxl.safetensors", "controlnets"
+                )
+                self.assertIsNotNone(cn_resolved)
 
 
 class ComfyGraphTests(unittest.TestCase):
@@ -404,7 +416,10 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertIn(("Qwen-Image-GenatomyFixer.safetensors", 0.9), names)
         self.assertFalse(any(name == "ignored.safetensors" for name, _ in names))
 
-    def test_controlnet_unsupported(self) -> None:
+    def test_controlnet_unresolvable_unsupported(self) -> None:
+        # ControlNetApplyAdvanced present but not wired to a control_net loader
+        # (e.g. a dangling/placeholder node) is a clear rejection, not a
+        # silent txt2img fallback.
         graph = _sdxl_graph()
         graph["99"] = {
             "class_type": "ControlNetApplyAdvanced",
@@ -412,7 +427,107 @@ class ComfyGraphTests(unittest.TestCase):
         }
         result = compile_workflow(graph)
         self.assertFalse(result.supported)
-        self.assertIn("ControlNetApplyAdvanced", result.unsupported_nodes)
+        self.assertIn("resolve", result.reason.lower())
+
+    def _controlnet_graph(
+        self,
+        graph: dict,
+        *,
+        positive_id: str,
+        negative_id: str,
+        ksampler_id: str,
+        strength: float = 0.8,
+    ) -> dict:
+        graph["30"] = {
+            "class_type": "ControlNetLoader",
+            "inputs": {"control_net_name": "control-canny-sdxl.safetensors"},
+        }
+        graph["31"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "source.png"},
+        }
+        graph["32"] = {
+            "class_type": "CannyEdgePreprocessor",
+            "inputs": {"image": ["31", 0], "low_threshold": 100, "high_threshold": 200},
+        }
+        graph["33"] = {
+            "class_type": "ControlNetApplyAdvanced",
+            "inputs": {
+                "positive": [positive_id, 0],
+                "negative": [negative_id, 0],
+                "control_net": ["30", 0],
+                "image": ["32", 0],
+                "strength": strength,
+                "start_percent": 0.0,
+                "end_percent": 1.0,
+            },
+        }
+        graph[ksampler_id]["inputs"]["positive"] = ["33", 0]
+        graph[ksampler_id]["inputs"]["negative"] = ["33", 1]
+        return graph
+
+    def test_compiles_sdxl_controlnet_canny(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet, "control-canny-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnet_image, "source.png")
+        self.assertEqual(result.compiled.controlnet_preprocessor, "canny")
+        self.assertAlmostEqual(result.compiled.controlnet_strength, 0.8)
+        # Conditioning text must still resolve through the ControlNetApply pass-through.
+        self.assertEqual(result.compiled.positive, "a glassblower")
+        self.assertEqual(result.compiled.negative, "blurry")
+
+    def test_compiles_flux_controlnet_canny(self) -> None:
+        graph = self._controlnet_graph(
+            _flux_graph(), positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "flux")
+        self.assertEqual(result.compiled.controlnet, "control-canny-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnet_preprocessor, "canny")
+        self.assertEqual(result.compiled.positive, "flux prompt")
+
+    def test_compiles_qwen_controlnet_canny(self) -> None:
+        graph = self._controlnet_graph(
+            _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "qwen")
+        self.assertEqual(result.compiled.controlnet, "control-canny-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnet_preprocessor, "canny")
+
+    def test_controlnet_unsupported_for_flux_klein(self) -> None:
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph = self._controlnet_graph(
+            graph, positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("Klein", result.reason)
+
+    def test_controlnet_with_img2img_unsupported(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["1", 2]},
+        }
+        graph["5"]["inputs"]["latent_image"] = ["21", 0]
+        graph["5"]["inputs"]["denoise"] = 0.6
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("img2img", result.reason.lower())
 
     def test_denoise_without_init_unsupported(self) -> None:
         graph = _sdxl_graph()
@@ -504,6 +619,78 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertTrue(result.supported, result.reason)
         assert result.compiled is not None
         self.assertEqual(result.compiled.init_image, "init.png")
+
+    def _inpaint_graph(self, graph: dict, *, positive_id: str, negative_id: str,
+                        vae_link: list, ksampler_id: str) -> dict:
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["22"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": [positive_id, 0],
+                "negative": [negative_id, 0],
+                "vae": vae_link,
+                "pixels": ["20", 0],
+                "mask": ["21", 0],
+            },
+        }
+        graph[ksampler_id]["inputs"]["positive"] = ["22", 0]
+        graph[ksampler_id]["inputs"]["negative"] = ["22", 1]
+        graph[ksampler_id]["inputs"]["latent_image"] = ["22", 2]
+        graph[ksampler_id]["inputs"]["denoise"] = 0.7
+        return graph
+
+    def test_compiles_flux_inpaint(self) -> None:
+        graph = self._inpaint_graph(
+            _flux_graph(), positive_id="4", negative_id="5",
+            vae_link=["3", 0], ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "flux")
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.init_image, "init.png")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
+
+    def test_compiles_qwen_inpaint(self) -> None:
+        graph = self._inpaint_graph(
+            _qwen_graph(), positive_id="4", negative_id="5",
+            vae_link=["3", 0], ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "qwen")
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
+
+    def test_flux_klein_inpaint_unsupported(self) -> None:
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph = self._inpaint_graph(
+            graph, positive_id="4", negative_id="5",
+            vae_link=["3", 0], ksampler_id="8",
+        )
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("Klein", result.reason)
+
+    def test_flux_klein_img2img_still_supported(self) -> None:
+        # Only inpaint (mask) is blocked for Klein — plain img2img stays allowed.
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["8"]["inputs"]["latent_image"] = ["21", 0]
+        graph["8"]["inputs"]["denoise"] = 0.55
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "img2img")
 
 
 if __name__ == "__main__":

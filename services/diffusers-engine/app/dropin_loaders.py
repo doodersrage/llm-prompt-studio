@@ -184,14 +184,36 @@ def load_qwen25_vl_from_single_file(
     if buf_fixed:
         print(f"[diffusers] Qwen TE materialized {buf_fixed} meta buffers", flush=True)
 
+    _sample_before = next(model.parameters()).dtype
+    _n_not_target = sum(1 for p in model.parameters() if p.dtype != dtype)
+    print(
+        f"[diffusers] Qwen TE post-load dtype check: requested={dtype!r} "
+        f"sample_param_dtype={_sample_before!r} "
+        f"params_not_matching_target={_n_not_target}/{sum(1 for _ in model.parameters())}",
+        flush=True,
+    )
+
     # Cast parameters only (buffers stay float32 RoPE tables).
     if dtype is not None:
         try:
+            _cast_count = 0
             for param in model.parameters():
                 if param.dtype != dtype:
                     param.data = param.data.to(dtype=dtype)
+                    _cast_count += 1
         except Exception as cast_exc:
             print(f"[diffusers] Qwen TE dtype cast skipped: {cast_exc}", flush=True)
+        else:
+            print(f"[diffusers] Qwen TE dtype cast applied to {_cast_count} params", flush=True)
+
+    _sample_after = next(model.parameters()).dtype
+    _n_not_target_after = sum(1 for p in model.parameters() if p.dtype != dtype)
+    print(
+        f"[diffusers] Qwen TE post-cast dtype check: "
+        f"sample_param_dtype={_sample_after!r} "
+        f"params_not_matching_target={_n_not_target_after}/{sum(1 for _ in model.parameters())}",
+        flush=True,
+    )
 
     print(
         f"[diffusers] Qwen TE from drop-in {path.name} "

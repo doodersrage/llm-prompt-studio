@@ -21,7 +21,7 @@ class AssetFile:
     kind: str  # single_file | diffusers_dir
     family: str
     path: str
-    bucket: str  # checkpoints | diffusion_models | text_encoders | vaes | loras
+    bucket: str  # checkpoints | diffusion_models | text_encoders | vaes | loras | controlnets
 
 
 def _comfy_subdir(*parts: str) -> Path | None:
@@ -65,7 +65,9 @@ def _infer_asset_family(name: str) -> str:
 def _is_picker_weight(name: str, *, bucket: str) -> bool:
     """Skip obvious non-base weights from Studio pickers."""
     token = _normalize_token(name)
-    if any(n in token for n in ("lora", "controlnet", "ipadapter", "embedding")):
+    if bucket != "controlnets" and any(
+        n in token for n in ("lora", "controlnet", "ipadapter", "embedding")
+    ):
         return False
     if bucket == "checkpoints" and "refiner" in token:
         return False
@@ -150,6 +152,14 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         )
         if p is not None
     ]
+    controlnet_roots = [
+        p
+        for p in (
+            _comfy_subdir("models", "controlnet"),
+            _service_dir("controlnets"),
+        )
+        if p is not None
+    ]
 
     return {
         "checkpoints": _list_bucket(
@@ -165,6 +175,9 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         ),
         "vaes": _list_bucket("vaes", vae_roots, family_fn=lambda n: "other"),
         "loras": _list_bucket("loras", lora_roots, family_fn=_infer_asset_family),
+        "controlnets": _list_bucket(
+            "controlnets", controlnet_roots, family_fn=lambda n: "other"
+        ),
     }
 
 

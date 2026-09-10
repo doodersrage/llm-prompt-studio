@@ -4,7 +4,75 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 
 ### Scope / non-goals (parked)
 
-- **Not** for Play film, ControlNet, FaceDetailer, specialty enrich, or Video tool clips — switch to ComfyUI or Fal / Replicate / Grok / Gemini.
+- **Not** for Play film, FaceDetailer, specialty enrich, or Video tool clips — switch to ComfyUI or Fal / Replicate / Grok / Gemini.
+- **ControlNet is Canny-only, SDXL + classic Flux + Qwen (Union checkpoints only).**
+  `ControlNetLoader → [CannyEdgePreprocessor] → ControlNetApply(Advanced)` compiles natively
+  via `StableDiffusionXLControlNetPipeline` / `FluxControlNetPipeline` /
+  `QwenImageControlNetPipeline` (local opencv Canny, no extra models to download beyond the
+  ControlNet checkpoint itself, dropped into `controlnets/` or `$COMFYUI_ROOT/models/controlnet`).
+  Pose/depth (`DWPreprocessor`, `DepthAnythingV2Preprocessor`) and Flux2-Klein ControlNet
+  still fall back to ComfyUI — no bundled pose/depth models, and no vetted pipeline for Klein.
+  ControlNet does not combine with img2img/inpaint.
+  - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
+    SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
+    ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra
+    `control_mode` selector — loading them as a plain `ControlNetModel`/`FluxControlNetModel`
+    silently drops that routing. `app/safetensors_peek.py` reads the safetensors header
+    (no torch needed) to tell these apart and switches to `ControlNetUnionModel` /
+    `StableDiffusionXLControlNetUnionPipeline` with `control_mode` set for Canny's task
+    bucket automatically. The exact task-index mapping is only verified for the well-known
+    6-mode xinsir SDXL taxonomy (bucket 3 = canny/lineart/mlsd); a Flux union checkpoint's
+    control_mode defaults to `0` as a best-effort guess — check that checkpoint's model
+    card if results look off.
+  - **XLabs-style Flux ControlNets are rejected up front**, not attempted and left to fail
+    deep in a torch error. Diffusers' `FluxControlNetModel` only loads the diffusers-native
+    key layout (`x_embedder`/`transformer_blocks`/`controlnet_blocks`); older XLabs-AI
+    releases (`double_blocks`/`img_in`/`input_hint_block` keys — e.g. some `flux-openpose`
+    community checkpoints) are a different architecture entirely. Use ComfyUI for those.
+  - **Qwen ControlNet supports only the plain Union/Canny checkpoint variant**
+    (e.g. InstantX's `Qwen-Image-ControlNet-Union`), not the separate
+    mask-conditioned `Qwen-Image-ControlNet-Inpainting` checkpoint. Both are
+    diffusers-native `QwenImageControlNetModel`-shaped, but the Inpainting variant's
+    `controlnet_x_embedder` takes 4 extra mask channels beyond the plain variant's width —
+    `app/safetensors_peek.py` detects this from the header and rejects it rather than
+    guess at how diffusers wants those channels fed. DiffSynth-Studio's Qwen ControlNet
+    "model patch" checkpoints (a different forward-hook architecture, no
+    `controlnet_x_embedder`/`transformer_blocks`) are rejected the same way. The Qwen
+    ControlNet code path also skips the tuned group-offload/unet-resident VRAM
+    choreography the main Qwen txt2img/img2img path uses — it's the same proven
+    `from_pipe` + `inspect.signature` pattern as SDXL/Flux ControlNet, just slower.
+  - **`.from_single_file()` doesn't cover every ControlNet model class in every
+    diffusers release** — confirmed via GPU smoke test: `ControlNetUnionModel`,
+    `FluxControlNetModel`, and `QwenImageControlNetModel` all raised "FromOriginalModelMixin
+    is currently only compatible with [...]" on the installed diffusers version even
+    though the checkpoints are architecturally fine (plain `ControlNetModel` for
+    non-Union SDXL is unaffected). `pipeline.py`'s `_load_via_hub_config_local_weights()`
+    works around this: it fetches just the small `config.json` from a known hub repo
+    (`xinsir/controlnet-union-sdxl-1.0`, `InstantX/FLUX.1-dev-Controlnet-Union`,
+    `InstantX/Qwen-Image-ControlNet-Union`) and loads the *local* checkpoint's weights
+    into that architecture — no multi-GB re-download — then verifies the state dict
+    actually matches (no missing/unexpected keys) before using it, refusing rather than
+    silently loading a mismatched model if it doesn't.
+- **Qwen text encoder: needs the bf16 file, not Comfy's fp8-scaled one.**
+  `load_qwen25_vl_from_single_file()` explicitly rejects `*_fp8_scaled.safetensors`
+  (it carries `scale_weight`/`scale_input` tensors the drop-in loader doesn't
+  unpack) and `_load_qwen_pipeline()` then falls back to downloading a fresh
+  bf16 copy from the HF hub instead — slow, and it pushes VRAM close to the
+  edge on a 24GB card even though a local bf16 file usually already exists
+  (`qwen_2.5_vl_7b.safetensors`, ~16.6GB, vs. `qwen_2.5_vl_7b_fp8_scaled.safetensors`,
+  ~9.4GB). If your CLIPLoader node points at the fp8-scaled file, point it at
+  the bf16 one instead — same directory, drop-in loads it directly with no
+  re-download. Teaching the drop-in loader to read Comfy's fp8-scaled format
+  natively (so the smaller file works too) is a real improvement but hasn't
+  been done yet.
+- **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
+  `LoadImageMask`). Flux2-Klein inpaint stays unsupported — no mask-capable pipeline for it.
+- **Still not attempted: IP-Adapter/InstantID/PuLID identity lock, FaceDetailer.** Both are
+  third-party ComfyUI custom nodes (Impact-Pack, IPAdapter-Plus) whose exact input schema
+  and checkpoint key layout (open_clip → HF CLIP-vision remap for IP-Adapter; detector
+  provider chains for FaceDetailer) need verifying against a real checkpoint/live install —
+  not safe to guess blind without a live ComfyUI install + real checkpoints to verify
+  against.
 - On 24GB cards, Qwen Image 2512 **Lightning quality + speed belong to Comfy** (bf16 + Dynamic VRAM / `comfy-aimdo`). Diffusers either uses fp8+layerwise (faster, more grain/moiré) or full bf16 group-offload (slow / OOM-prone).
 - Do **not** expect Comfy Dynamic VRAM parity here; that requires Comfy’s faulting ops, not mmap alone.
 - Opt-in full bf16: `DIFFUSERS_QWEN_LIGHTNING_BF16=1` (experimental; expect group-offload thrash on 24GB).
@@ -60,6 +128,21 @@ python -m venv "$VENV"
 # or: DIFFUSERS_VENV="$VENV" ./run.sh
 ```
 
+### Manual GPU smoke test
+
+`scripts/gpu_smoke_test.py` is not part of the `tests/` unittest suite (it needs
+torch/CUDA and real checkpoints, so it can't run in CI or a no-GPU sandbox) — it
+calls `app.pipeline.pipeline_holder` directly with real assets from
+`$COMFYUI_ROOT/models`, the same functions `workflow_exec.py` calls, and writes
+PNGs to `outputs/smoke/` for visual review. Covers SDXL/Flux/Qwen ControlNet
+(including the Union-checkpoint routing and the XLabs/mask-variant rejections)
+and Flux/Qwen inpaint:
+
+```bash
+"$VENV/bin/python" scripts/gpu_smoke_test.py                              # everything
+"$VENV/bin/python" scripts/gpu_smoke_test.py qwen_controlnet_union        # just one
+```
+
 With `COMFYUI_ROOT` set, a miss on Hugging Face will use local Comfy weights. Preferred order for studio/Flux aliases:
 
 1. `RealVisXL_V5.0_fp16.safetensors` (photoreal finetune)
@@ -104,6 +187,15 @@ For person prompts, Diffusers auto-attaches an SDXL hand LoRA (downloads once if
 | `DIFFUSERS_OUTPUT_DIR`       | `./outputs`              | Generated PNGs                                                                                                                      |
 | `DIFFUSERS_INPUT_DIR`        | `./inputs`               | Uploads                                                                                                                             |
 | `DIFFUSERS_ENGINE_URL`       | `http://127.0.0.1:8190`  | Returned as `engine_url`                                                                                                            |
+
+### ControlNet assets
+
+Drop SDXL/Flux/Qwen ControlNet checkpoints (e.g. `control-canny-sdxl-1.0.safetensors`,
+`Qwen-Image-InstantX-ControlNet-Union.safetensors`) into this service's own `controlnets/`
+folder (created on first run, next to `loras/`) or `$COMFYUI_ROOT/models/controlnet`.
+Resolved the same way as loras/vaes (exact filename match, drop-in folder first). Also
+runs `pip install -r requirements.txt` to pick up `opencv-python-headless` (needed for
+the local Canny preprocessor).
 
 ### Model resolution order
 

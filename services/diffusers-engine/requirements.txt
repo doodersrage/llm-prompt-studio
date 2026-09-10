@@ -11,5 +11,6 @@ peft>=0.13.0
 safetensors>=0.4.0
 compel>=2.0.0
 torchvision>=0.17.0
+opencv-python-headless>=4.9.0  # ControlNet Canny preprocessing
 
 

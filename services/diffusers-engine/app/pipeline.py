@@ -431,6 +431,42 @@ def _free_peer_comfy_vram() -> None:
         pass
 
 
+def _load_via_hub_config_local_weights(
+    model_cls: Any,
+    hub_config_id: str,
+    local_path: str,
+    dtype: Any,
+) -> Any:
+    """Work around diffusers model classes that aren't in
+    FromOriginalModelMixin's single-file whitelist in every release (seen in
+    practice for ControlNetUnionModel, FluxControlNetModel, and
+    QwenImageControlNetModel — .from_single_file() raises
+    "FromOriginalModelMixin is currently only compatible with [...]" even
+    though the checkpoint's architecture is fine). Fetch just the (tiny)
+    config.json from a known-compatible hub repo, build the model from that
+    config, then load the LOCAL checkpoint's weights into it — no multi-GB
+    re-download of weights already on disk. Raises if the local state dict
+    doesn't actually match the fetched config's architecture (missing or
+    unexpected keys) rather than silently loading a mismatched model, since
+    the hub_config_id here is a best-effort match by naming convention, not
+    something verified byte-for-byte against the local file."""
+    from safetensors.torch import load_file as _load_safetensors
+
+    config = model_cls.load_config(hub_config_id)
+    candidate = model_cls.from_config(config)
+    state_dict = _load_safetensors(local_path)
+    missing, unexpected = candidate.load_state_dict(state_dict, strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            f"{Path(local_path).name} doesn't match {hub_config_id}'s "
+            f"architecture (missing={len(missing)} unexpected={len(unexpected)} "
+            f"state_dict keys) — refusing to load a possibly-corrupted model. "
+            f"The checkpoint may not actually be the same architecture as "
+            f"{hub_config_id}; verify manually."
+        )
+    return candidate.to(dtype)
+
+
 def _qwen_transformer_load_dtype(path: Path, default_dtype: Any) -> Any:
     """Keep Comfy fp8 e4m3fn UNETs in fp8 so they fit resident on 24GB."""
     import torch
@@ -544,6 +580,8 @@ class PipelineHolder:
         self._offloaded = False
         self._unet_resident = False
         self._group_offload_blocks: int = GROUP_OFFLOAD_BLOCKS
+        self._controlnet_key: str | None = None
+        self._controlnet_model: Any = None
 
     def describe(self) -> tuple[str, str, bool]:
         if MOCK_MODE:
@@ -973,6 +1011,40 @@ class PipelineHolder:
             except Exception:
                 pass
 
+    def _restore_pipe_component_dtype(self, pipe: Any, dtype: Any) -> None:
+        """Re-cast text_encoder(s)/vae back to `dtype` after DiffusionPipeline
+        .from_pipe() — confirmed via GPU smoke test that from_pipe() silently
+        upcasts Qwen's text_encoder from bf16 to float32 (traced with explicit
+        dtype prints immediately before/after the call: bf16 in, float32 out),
+        doubling its footprint from ~15.4GiB to ~30.9GiB and making it
+        physically unable to fit on a 24GB card no matter what else is freed.
+        Only touches parameters that actually drifted, and only parameters
+        (not buffers, e.g. RoPE tables) — cheap since these components are
+        CPU-resident at this point, not yet moved to CUDA.
+        """
+        import torch
+
+        if pipe is None or dtype is None:
+            return
+        for name in ("text_encoder", "text_encoder_2", "vae"):
+            mod = getattr(pipe, name, None)
+            if mod is None or not isinstance(mod, torch.nn.Module):
+                continue
+            try:
+                drifted = 0
+                for param in mod.parameters():
+                    if param.dtype != dtype and param.is_floating_point():
+                        param.data = param.data.to(dtype=dtype)
+                        drifted += 1
+                if drifted:
+                    print(
+                        f"[diffusers] from_pipe() drifted {name} dtype — "
+                        f"restored {drifted} params to {dtype}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(f"[diffusers] {name} dtype restore skipped: {exc}", flush=True)
+
     def _cuda_param_mb(self, module: Any) -> float:
         """MiB of parameters currently resident on CUDA (for park diagnostics)."""
         import torch
@@ -990,6 +1062,99 @@ class PipelineHolder:
         except Exception:
             return 0.0
         return float(total) / (1024.0 * 1024.0)
+
+    def _bulk_module_to_cuda(self, module: Any, device: Any) -> None:
+        """Move every CPU parameter of `module` onto CUDA as ONE allocation,
+        instead of nn.Module.to(device)'s default per-parameter transfer.
+
+        Confirmed via GPU smoke test: moving the Qwen text encoder (729
+        tensors, 16.58GB bf16 on disk) with plain `te.to(cuda)` landed at
+        ~19.7-19.9GB actually allocated on device — this process held
+        0MiB/0MiB (allocated/reserved) immediately beforehand, so that
+        ~3.1-3.3GB gap isn't anything else holding memory, it's the caching
+        allocator's own per-allocation rounding/padding across hundreds of
+        separate cudaMalloc-equivalent calls. Packing every parameter into
+        one big buffer and handing out views into it turns that into a
+        single allocation, which should reclaim most of that overhead —
+        the difference between "just barely doesn't fit" and "fits".
+        """
+        import torch
+
+        if module is None or not isinstance(module, torch.nn.Module):
+            return
+        device = torch.device(device)
+        params = [
+            (name, p)
+            for name, p in module.named_parameters()
+            if p.device.type != device.type
+        ]
+        if not params:
+            return
+        dtypes = {p.dtype for _, p in params}
+        if len(dtypes) != 1:
+            # Mixed dtypes: don't risk mis-packing a heterogeneous buffer —
+            # fall back to the normal (slower, more allocator overhead) path.
+            module.to(device)
+            return
+        dtype = next(iter(dtypes))
+        sizes = [p.numel() for _, p in params]
+        total = sum(sizes)
+        if total == 0:
+            module.to(device)
+            return
+        _raw_bytes = sum(p.numel() * p.element_size() for _, p in params)
+        _itemsize = torch.empty((), dtype=dtype).element_size()
+        _requested_gib = total * _itemsize / (1024**3)
+        print(
+            f"[diffusers] bulk-transfer plan: {len(params)} params, "
+            f"dtype={dtype}, itemsize={_itemsize}B, total_elems={total}, "
+            f"requested={_requested_gib:.2f}GiB, "
+            f"raw_param_bytes={_raw_bytes / (1024**3):.2f}GiB",
+            flush=True,
+        )
+        if torch.cuda.is_available():
+            _dev_total_gib = torch.cuda.mem_get_info()[1] / (1024**3)
+            if _requested_gib > _dev_total_gib * 1.05:
+                # Something's off by roughly 2x — don't burn minutes on a
+                # transfer that can never succeed. Fall back immediately;
+                # the print above already captured the numbers to debug.
+                print(
+                    f"[diffusers] bulk-transfer request ({_requested_gib:.2f}GiB) "
+                    f"exceeds device capacity ({_dev_total_gib:.2f}GiB) — "
+                    "skipping, falling back to per-parameter .to()",
+                    flush=True,
+                )
+                module.to(device)
+                return
+        try:
+            flat_cpu = torch.empty(total, dtype=dtype)
+            offset = 0
+            spans: list[tuple[str, int, int, Any]] = []
+            for (name, p), n in zip(params, sizes):
+                flat_cpu[offset : offset + n].copy_(p.detach().reshape(-1))
+                spans.append((name, offset, n, p.shape))
+                offset += n
+            flat_cuda = flat_cpu.to(device)
+            del flat_cpu
+        except Exception as exc:
+            print(
+                f"[diffusers] bulk CUDA transfer failed ({exc}); "
+                "falling back to per-parameter .to()",
+                flush=True,
+            )
+            module.to(device)
+            return
+        by_name = dict(module.named_parameters())
+        for name, off, n, shape in spans:
+            by_name[name].data = flat_cuda[off : off + n].view(shape)
+        # Buffers (RoPE tables etc.) are tiny relative to the parameters —
+        # not worth the same bulk-packing complexity, move them normally.
+        for _name, buf in module.named_buffers():
+            if buf.device.type != device.type:
+                try:
+                    buf.data = buf.data.to(device)
+                except Exception:
+                    pass
 
     def _park_pipe(self, pipe: Any) -> None:
         """Park a pipeline on CPU. Do not upcast — bf16 DiT→fp32 would explode RAM."""
@@ -1028,6 +1193,8 @@ class PipelineHolder:
         self._resolved = None
         self._offloaded = False
         self._unet_resident = False
+        self._controlnet_key = None
+        self._controlnet_model = None
         if pipe is not None:
             try:
                 self._park_pipe(pipe)
@@ -1915,10 +2082,17 @@ class PipelineHolder:
         mask_image_path: str | None = None,
         img2img_mode: str = "txt2img",
         denoise: float = 1.0,
+        controlnet_path: str | None = None,
+        controlnet_image_path: str | None = None,
+        controlnet_preprocessor: str = "none",
+        controlnet_strength: float = 1.0,
     ) -> Image.Image:
         """
         Native SDXL from a Comfy graph — same quality stack as txt2img
         (CLIP fit, hand LoRA, RealVis CFG, fp32 VAE decode).
+        ControlNet (Canny only, SDXL only) inserts StableDiffusionXLControlNetPipeline
+        ahead of the plain txt2img call below; it never combines with img2img/inpaint
+        (comfy_graph.compile_workflow already rejects that combination).
         """
         import torch
         from diffusers import (
@@ -2086,6 +2260,145 @@ class PipelineHolder:
                 with _silence_model_warnings():
                     result = i2i_pipe(**i2i_kwargs)
                 image = result.images[0]
+            finally:
+                self._empty_cuda()
+            if on_step:
+                on_step(plan.steps, plan.steps)
+            return image
+
+        use_controlnet = (
+            not use_img2img
+            and controlnet_path is not None
+            and controlnet_image_path is not None
+        )
+        if use_controlnet:
+            from app.safetensors_peek import sdxl_controlnet_is_union
+
+            control_image = Image.open(controlnet_image_path).convert("RGB")
+            if controlnet_preprocessor == "canny":
+                from app.controlnet_preprocess import canny as _canny_preprocess
+
+                control_image = _canny_preprocess(control_image)
+            control_image = control_image.resize(
+                (gen_width, gen_height), Image.Resampling.LANCZOS
+            )
+
+            # xinsir-style "Union" SDXL ControlNets (task_embedding /
+            # control_add_embedding tensors) need ControlNetUnionModel + the
+            # Union pipeline + an explicit control_mode — plain ControlNetModel
+            # silently drops those weights. Sniff the safetensors header (no
+            # torch needed) rather than assuming every .safetensors here is a
+            # plain single-task checkpoint.
+            is_union = sdxl_controlnet_is_union(controlnet_path)
+            cn_key = f"sdxl-{'union' if is_union else 'plain'}:{controlnet_path}"
+            if self._controlnet_key != cn_key or self._controlnet_model is None:
+                print(
+                    f"[diffusers] loading {'Union ' if is_union else ''}ControlNet "
+                    f"{Path(controlnet_path).name}",
+                    flush=True,
+                )
+                if is_union:
+                    from diffusers import ControlNetUnionModel
+
+                    try:
+                        self._controlnet_model = ControlNetUnionModel.from_single_file(
+                            controlnet_path, torch_dtype=torch.float16,
+                        )
+                    except Exception as exc:
+                        # Not every diffusers release has ControlNetUnionModel
+                        # in FromOriginalModelMixin's single-file whitelist —
+                        # fall back to a hub config + local weights (see
+                        # _load_via_hub_config_local_weights docstring).
+                        print(
+                            f"[diffusers] ControlNetUnionModel.from_single_file "
+                            f"failed ({exc}); trying hub config + local weights",
+                            flush=True,
+                        )
+                        self._controlnet_model = _load_via_hub_config_local_weights(
+                            ControlNetUnionModel,
+                            "xinsir/controlnet-union-sdxl-1.0",
+                            controlnet_path,
+                            torch.float16,
+                        )
+                else:
+                    from diffusers import ControlNetModel
+
+                    self._controlnet_model = ControlNetModel.from_single_file(
+                        controlnet_path, torch_dtype=torch.float16,
+                    )
+                self._controlnet_key = cn_key
+            if is_union:
+                from diffusers import StableDiffusionXLControlNetUnionPipeline
+
+                cn_pipe = StableDiffusionXLControlNetUnionPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            else:
+                from diffusers import StableDiffusionXLControlNetPipeline
+
+                cn_pipe = StableDiffusionXLControlNetPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            cn_pipe = self._place_compiled_pipe(cn_pipe, torch.float16)
+            cn_kwargs: dict[str, Any] = {
+                "controlnet_conditioning_scale": (
+                    [float(controlnet_strength)] if is_union else float(controlnet_strength)
+                ),
+                "width": gen_width,
+                "height": gen_height,
+                "num_inference_steps": plan.steps,
+                "guidance_scale": plan.guidance_scale,
+                "generator": generator,
+                "output_type": "latent",
+                "guidance_rescale": 0.7,
+            }
+            if is_union:
+                # xinsir's 6-task taxonomy: 0 openpose, 1 depth, 2 soft-edge,
+                # 3 canny/lineart/mlsd, 4 normal, 5 segment. Only Canny is wired
+                # up as a preprocessor today, so this only ever needs bucket 3 —
+                # flagged here rather than hardcoded silently in case a future
+                # preprocessor (or a "none" pass-through of a non-canny image)
+                # needs a different bucket.
+                control_mode = 3
+                if controlnet_preprocessor not in ("canny", "none"):
+                    print(
+                        f"[diffusers] controlnet preprocessor={controlnet_preprocessor!r} "
+                        f"has no known Union control_mode mapping — defaulting to "
+                        f"canny's bucket (3); verify against the checkpoint's model card.",
+                        flush=True,
+                    )
+                cn_kwargs["control_image"] = [control_image]
+                cn_kwargs["control_mode"] = [control_mode]
+            else:
+                cn_kwargs["image"] = control_image
+            cn_kwargs.update(encode_kwargs)
+            print(
+                f"[diffusers] compiled-sdxl controlnet({controlnet_preprocessor}"
+                f"{',union' if is_union else ''}) "
+                f"model={path.name} cn={Path(controlnet_path).name} "
+                f"{gen_width}x{gen_height} steps={plan.steps} "
+                f"cfg={plan.guidance_scale} strength={controlnet_strength:.2f}",
+                flush=True,
+            )
+            try:
+                with _silence_model_warnings():
+                    result = cn_pipe(**cn_kwargs)
+                image = self._decode_latents_fp32(cn_pipe, result.images)
+            except torch.cuda.OutOfMemoryError:
+                self._empty_cuda()
+                cn_kwargs["width"] = 768
+                cn_kwargs["height"] = 768
+                small = control_image.resize((768, 768), Image.Resampling.LANCZOS)
+                if is_union:
+                    cn_kwargs["control_image"] = [small]
+                else:
+                    cn_kwargs["image"] = small
+                cn_kwargs["generator"] = torch.Generator(device=device_for_gen).manual_seed(
+                    int(seed) & 0xFFFFFFFF
+                )
+                with _silence_model_warnings():
+                    result = cn_pipe(**cn_kwargs)
+                image = self._decode_latents_fp32(cn_pipe, result.images)
             finally:
                 self._empty_cuda()
             if on_step:
@@ -2392,6 +2705,37 @@ class PipelineHolder:
                 torch.bfloat16,
             ):
                 transformer.to(dtype=torch.bfloat16)
+            # enable_layerwise_casting() skips modules matching its default
+            # pattern ("pos_embed", "patch_embed", "norm" substrings) — it
+            # assumes those were already loaded in compute_dtype and leaves
+            # them alone, never wrapping them with a cast hook. This specific
+            # checkpoint (Comfy's qwen_image_fp8_e4m3fn export) quantizes
+            # EVERY tensor to fp8, including norm layers/scales — confirmed
+            # by inspecting the safetensors header directly (1933/1933
+            # tensors are F8_E4M3, txt_norm.weight included). That breaks
+            # diffusers' assumption: skip-pattern weights stay permanently
+            # fp8 with no runtime upcast, so `hidden_states * self.weight`
+            # crashes with "Promotion for Float8 Types is not supported"
+            # the moment a skipped norm layer runs — confirmed via GPU
+            # smoke test. Upcast exactly what the skip pattern will leave
+            # untouched, before enabling the hook.
+            _skip_patterns = ("pos_embed", "patch_embed", "norm")
+            _upcast_count = 0
+            for _name, _param in transformer.named_parameters():
+                if _param.dtype not in (
+                    torch.float8_e4m3fn,
+                    getattr(torch, "float8_e5m2", type(None)),
+                ):
+                    continue
+                if any(pat in _name for pat in _skip_patterns):
+                    _param.data = _param.data.to(dtype=torch.bfloat16)
+                    _upcast_count += 1
+            if _upcast_count:
+                print(
+                    f"[diffusers] upcast {_upcast_count} layerwise-cast-skipped "
+                    "DiT params (pos_embed/patch_embed/norm) fp8→bf16",
+                    flush=True,
+                )
             transformer.enable_layerwise_casting(
                 storage_dtype=torch.float8_e4m3fn,
                 compute_dtype=torch.bfloat16,
@@ -3037,9 +3381,19 @@ class PipelineHolder:
         base_shift: float,
         on_step: Callable[[int, int], None] | None = None,
         init_image_path: str | None = None,
+        mask_image_path: str | None = None,
+        img2img_mode: str = "txt2img",
         denoise: float = 1.0,
+        controlnet_path: str | None = None,
+        controlnet_image_path: str | None = None,
+        controlnet_preprocessor: str = "none",
+        controlnet_strength: float = 1.0,
     ) -> Image.Image:
-        """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA)."""
+        """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA).
+        ControlNet (Canny only, classic Flux only — never Klein) inserts
+        FluxControlNetPipeline ahead of plain txt2img; comfy_graph rejects
+        ControlNet combined with img2img/inpaint before this is ever reached.
+        """
         import torch
 
         from app.qwen_prompt import shape_person_prompts
@@ -3155,12 +3509,181 @@ class PipelineHolder:
 
             callback_on_step_end = _cb
 
+        use_controlnet = (
+            controlnet_path is not None and controlnet_image_path is not None
+        )
+        if use_controlnet:
+            if klein_distilled:
+                raise RuntimeError(
+                    "Flux2-Klein ControlNet is not supported yet — use ComfyUI "
+                    "for this workflow."
+                )
+            from app.safetensors_peek import (
+                flux_controlnet_mode_count,
+                looks_like_diffusers_flux_controlnet,
+            )
+
+            if not looks_like_diffusers_flux_controlnet(controlnet_path):
+                raise RuntimeError(
+                    f"{Path(controlnet_path).name} looks like an XLabs-style Flux "
+                    "ControlNet (double_blocks/img_in/input_hint_block keys) — "
+                    "diffusers' FluxControlNetModel needs the diffusers-native "
+                    "layout (x_embedder/transformer_blocks/controlnet_blocks). "
+                    "Use ComfyUI for this checkpoint."
+                )
+            from diffusers import FluxControlNetModel, FluxControlNetPipeline
+
+            control_image = Image.open(controlnet_image_path).convert("RGB")
+            if controlnet_preprocessor == "canny":
+                from app.controlnet_preprocess import canny as _canny_preprocess
+
+                control_image = _canny_preprocess(control_image)
+            control_image = control_image.resize(
+                (int(width), int(height)), Image.Resampling.LANCZOS
+            )
+
+            cn_key = f"flux:{controlnet_path}"
+            if self._controlnet_key != cn_key or self._controlnet_model is None:
+                print(
+                    f"[diffusers] loading Flux ControlNet "
+                    f"{Path(controlnet_path).name}",
+                    flush=True,
+                )
+                cn_source = Path(controlnet_path)
+                errors: list[str] = []
+                model = None
+                if cn_source.is_file():
+                    try:
+                        model = FluxControlNetModel.from_single_file(
+                            str(cn_source), torch_dtype=torch.bfloat16
+                        )
+                    except Exception as exc:
+                        errors.append(f"from_single_file: {exc}")
+                if model is None:
+                    repo_dir = cn_source.parent if cn_source.is_file() else cn_source
+                    try:
+                        model = FluxControlNetModel.from_pretrained(
+                            str(repo_dir), torch_dtype=torch.bfloat16
+                        )
+                    except Exception as exc:
+                        errors.append(f"from_pretrained: {exc}")
+                if model is None:
+                    # Not every diffusers release has FluxControlNetModel in
+                    # FromOriginalModelMixin's single-file whitelist — fall
+                    # back to a hub config + local weights (see
+                    # _load_via_hub_config_local_weights docstring). This is
+                    # a best-effort repo-id guess by naming convention for
+                    # InstantX-style Union checkpoints; the state_dict shape
+                    # check inside will refuse rather than silently mismatch.
+                    mode_count = flux_controlnet_mode_count(controlnet_path)
+                    if mode_count is not None:
+                        try:
+                            model = _load_via_hub_config_local_weights(
+                                FluxControlNetModel,
+                                "InstantX/FLUX.1-dev-Controlnet-Union",
+                                str(cn_source),
+                                torch.bfloat16,
+                            )
+                        except Exception as exc:
+                            errors.append(f"hub-config+local-weights: {exc}")
+                if model is None:
+                    raise RuntimeError(
+                        f"Could not load Flux ControlNet from {controlnet_path}: "
+                        + "; ".join(errors)
+                    )
+                self._controlnet_model = model
+                self._controlnet_key = cn_key
+            cn_pipe = FluxControlNetPipeline.from_pipe(
+                pipe, controlnet=self._controlnet_model
+            )
+            cn_pipe = self._place_compiled_pipe(
+                cn_pipe,
+                torch.bfloat16,
+                prefer_offload=True,
+                pixel_count=max(1, int(width) * int(height)),
+            )
+
+            cn_kwargs: dict[str, Any] = {
+                "prompt": shaped_prompt,
+                "control_image": control_image,
+                "controlnet_conditioning_scale": float(controlnet_strength),
+                "width": int(width),
+                "height": int(height),
+                "num_inference_steps": step_count,
+                "generator": generator,
+            }
+            try:
+                import inspect
+
+                sig = inspect.signature(cn_pipe.__call__)
+                if "guidance_scale" in sig.parameters:
+                    cn_kwargs["guidance_scale"] = cfg
+                if "true_cfg_scale" in sig.parameters and cfg > 1.0:
+                    cn_kwargs["true_cfg_scale"] = cfg
+                if "callback_on_step_end" in sig.parameters:
+                    cn_kwargs["callback_on_step_end"] = callback_on_step_end
+                if shaped_negative.strip() and "negative_prompt" in sig.parameters:
+                    cn_kwargs["negative_prompt"] = shaped_negative
+                mode_count = flux_controlnet_mode_count(controlnet_path)
+                if mode_count is not None and "control_mode" in sig.parameters:
+                    # Union/multi-mode Flux ControlNets (e.g. InstantX-style
+                    # Union-Pro) need an explicit task index; the exact index
+                    # layout varies per release, so this is a best-effort
+                    # default (0), not a verified mapping — check the specific
+                    # checkpoint's model card if results look off.
+                    cn_kwargs["control_mode"] = 0
+                    print(
+                        f"[diffusers] Flux ControlNet is a {mode_count}-mode "
+                        f"union checkpoint — using control_mode=0 (best-effort "
+                        f"default; verify against the model card)",
+                        flush=True,
+                    )
+            except Exception:
+                cn_kwargs["guidance_scale"] = cfg
+                if callback_on_step_end is not None:
+                    cn_kwargs["callback_on_step_end"] = callback_on_step_end
+                if shaped_negative.strip():
+                    cn_kwargs["negative_prompt"] = shaped_negative
+
+            print(
+                f"[diffusers] compiled-flux controlnet({controlnet_preprocessor}) "
+                f"model={Path(unet_path).name} cn={Path(controlnet_path).name} "
+                f"{width}x{height} steps={step_count} cfg={cfg} "
+                f"strength={controlnet_strength:.2f}",
+                flush=True,
+            )
+            try:
+                result = cn_pipe(**cn_kwargs)
+                return result.images[0]
+            except Exception:
+                try:
+                    self._release_pipe()
+                except Exception:
+                    pass
+                raise
+            finally:
+                self._empty_cuda()
+
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
+        use_inpaint = (
+            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
+        )
+        if use_inpaint and klein_distilled:
+            raise RuntimeError(
+                "Flux2-Klein inpaint is not supported yet (no mask-capable "
+                "pipeline for Klein) — use ComfyUI for this workflow."
+            )
         init_image: Image.Image | None = None
+        mask_image: Image.Image | None = None
         if use_img2img:
             init_image = Image.open(init_image_path).convert("RGB")
             init_image = init_image.resize((int(width), int(height)), Image.Resampling.LANCZOS)
+            if use_inpaint:
+                mask_image = Image.open(mask_image_path).convert("L")
+                mask_image = mask_image.resize(
+                    (int(width), int(height)), Image.Resampling.LANCZOS
+                )
 
         kwargs: dict[str, Any] = {
             "prompt": shaped_prompt,
@@ -3172,6 +3695,8 @@ class PipelineHolder:
         if init_image is not None:
             kwargs["image"] = init_image
             kwargs["strength"] = strength
+        if mask_image is not None:
+            kwargs["mask_image"] = mask_image
         # guidance_scale / true_cfg differ by pipeline class.
         try:
             import inspect
@@ -3189,6 +3714,11 @@ class PipelineHolder:
                 raise RuntimeError(
                     "Flux img2img requires a pipeline that accepts image+strength."
                 )
+            if mask_image is not None and "mask_image" not in sig.parameters:
+                raise RuntimeError(
+                    "Flux inpaint requires a pipeline that accepts mask_image; "
+                    "this checkpoint only supports full-image img2img via Diffusers."
+                )
         except RuntimeError:
             raise
         except Exception:
@@ -3198,7 +3728,11 @@ class PipelineHolder:
             if shaped_negative.strip():
                 kwargs["negative_prompt"] = shaped_negative
 
-        mode_label = "img2img" if init_image is not None else "txt2img"
+        mode_label = (
+            "inpaint" if mask_image is not None
+            else "img2img" if init_image is not None
+            else "txt2img"
+        )
         print(
             f"[diffusers] compiled-flux {mode_label} model={Path(unet_path).name} "
             f"{width}x{height} steps={step_count} cfg={cfg} type={clip_type}"
@@ -3238,9 +3772,24 @@ class PipelineHolder:
         on_step: Callable[[int, int], None] | None = None,
         on_status: Callable[[str], None] | None = None,
         init_image_path: str | None = None,
+        mask_image_path: str | None = None,
+        img2img_mode: str = "txt2img",
         denoise: float = 1.0,
+        controlnet_path: str | None = None,
+        controlnet_image_path: str | None = None,
+        controlnet_preprocessor: str = "none",
+        controlnet_strength: float = 1.0,
     ) -> Image.Image:
-        """Native Qwen-Image from drop-in weights (+ optional VAE/Lightning LoRA)."""
+        """Native Qwen-Image from drop-in weights (+ optional VAE/Lightning LoRA).
+        ControlNet (Canny only, plain Union checkpoints only — the mask-
+        conditioned Inpainting-variant checkpoint is rejected, see
+        safetensors_peek.qwen_controlnet_expects_mask) takes a simpler code
+        path than the tuned main txt2img/img2img flow below: it skips the
+        group-offload/unet-resident VRAM choreography and the manual
+        encode_prompt embed path, calling the pipeline directly with a
+        prompt string instead. Slower, but it is the same proven from_pipe +
+        inspect.signature pattern already verified for the SDXL/Flux
+        ControlNet branches."""
         import torch
 
         from app.qwen_prompt import shape_qwen_prompts
@@ -3274,6 +3823,12 @@ class PipelineHolder:
             if (lightning and LIGHTNING_BF16)
             else ("lightning-fp8" if lightning else "fp8-or-default")
         )
+        # Needed below (from_pipe() dtype restore, ControlNet loader calls)
+        # whether or not this call hits the pipe cache — the inner `dtype`
+        # inside the cache-miss block further down only exists on a fresh
+        # load, so compute it unconditionally here too rather than relying
+        # on that one.
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
         key = (
             f"compiled-qwen:{model_path}:{clip_name}:{vae_name}:"
             f"{is_rapid_aio}:{precision_tag}"
@@ -3409,14 +3964,304 @@ class PipelineHolder:
 
             callback_on_step_end = _cb
 
+        use_controlnet = (
+            controlnet_path is not None and controlnet_image_path is not None
+        )
+        if use_controlnet:
+            from app.safetensors_peek import (
+                looks_like_diffusers_qwen_controlnet,
+                qwen_controlnet_expects_mask,
+            )
+
+            if not looks_like_diffusers_qwen_controlnet(controlnet_path):
+                raise RuntimeError(
+                    f"{Path(controlnet_path).name} doesn't look like a "
+                    "diffusers-native Qwen ControlNet (missing "
+                    "controlnet_x_embedder/transformer_blocks keys — e.g. "
+                    "DiffSynth-Studio 'model patch' style checkpoints use a "
+                    "different forward-hook architecture diffusers can't load "
+                    "via from_single_file). Use ComfyUI for this checkpoint."
+                )
+            if qwen_controlnet_expects_mask(controlnet_path):
+                raise RuntimeError(
+                    f"{Path(controlnet_path).name} looks like the "
+                    "mask-conditioned Qwen ControlNet-Inpainting variant (its "
+                    "controlnet_x_embedder takes 4 extra mask channels beyond "
+                    "img_in's width) — there's no verified pipeline call "
+                    "signature for feeding those extra channels yet. Only the "
+                    "plain Union/Canny Qwen ControlNet is supported; use "
+                    "ComfyUI for this checkpoint."
+                )
+            try:
+                from diffusers import QwenImageControlNetModel, QwenImageControlNetPipeline
+            except ImportError as exc:
+                raise RuntimeError(
+                    "This diffusers install has no QwenImageControlNetModel/"
+                    "QwenImageControlNetPipeline (added alongside the InstantX "
+                    "Qwen-Image ControlNet release) — upgrade diffusers or use "
+                    "ComfyUI for this workflow."
+                ) from exc
+
+            control_image = Image.open(controlnet_image_path).convert("RGB")
+            if controlnet_preprocessor == "canny":
+                from app.controlnet_preprocess import canny as _canny_preprocess
+
+                control_image = _canny_preprocess(control_image)
+            control_image = control_image.resize(
+                (gen_width, gen_height), Image.Resampling.LANCZOS
+            )
+
+            cn_key = f"qwen:{controlnet_path}"
+            if self._controlnet_key != cn_key or self._controlnet_model is None:
+                print(
+                    f"[diffusers] loading Qwen ControlNet "
+                    f"{Path(controlnet_path).name}",
+                    flush=True,
+                )
+                cn_source = Path(controlnet_path)
+                errors: list[str] = []
+                model = None
+                if cn_source.is_file():
+                    try:
+                        model = QwenImageControlNetModel.from_single_file(
+                            str(cn_source), torch_dtype=torch.bfloat16
+                        )
+                    except Exception as exc:
+                        errors.append(f"from_single_file: {exc}")
+                if model is None:
+                    repo_dir = cn_source.parent if cn_source.is_file() else cn_source
+                    try:
+                        model = QwenImageControlNetModel.from_pretrained(
+                            str(repo_dir), torch_dtype=torch.bfloat16
+                        )
+                    except Exception as exc:
+                        errors.append(f"from_pretrained: {exc}")
+                if model is None:
+                    # Not every diffusers release has QwenImageControlNetModel
+                    # in FromOriginalModelMixin's single-file whitelist — fall
+                    # back to a hub config + local weights (see
+                    # _load_via_hub_config_local_weights docstring). This is
+                    # the only Qwen ControlNet variant this code path reaches
+                    # (the mask-conditioned Inpainting variant is rejected
+                    # earlier), so the InstantX Union repo id is a solid
+                    # match, not a blind guess — the state_dict shape check
+                    # inside will still refuse rather than silently mismatch.
+                    try:
+                        model = _load_via_hub_config_local_weights(
+                            QwenImageControlNetModel,
+                            "InstantX/Qwen-Image-ControlNet-Union",
+                            str(cn_source),
+                            torch.bfloat16,
+                        )
+                    except Exception as exc:
+                        errors.append(f"hub-config+local-weights: {exc}")
+                if model is None:
+                    raise RuntimeError(
+                        f"Could not load Qwen ControlNet from {controlnet_path}: "
+                        + "; ".join(errors)
+                    )
+                self._controlnet_model = model
+                self._controlnet_key = cn_key
+            _te_before_cn = getattr(pipe, "text_encoder", None)
+            print(
+                f"[diffusers] TE dtype before controlnet from_pipe: "
+                f"{next(_te_before_cn.parameters()).dtype if _te_before_cn is not None else None}",
+                flush=True,
+            )
+            cn_pipe = QwenImageControlNetPipeline.from_pipe(
+                pipe, controlnet=self._controlnet_model
+            )
+            self._restore_pipe_component_dtype(cn_pipe, dtype)
+            _te_after_cn = getattr(cn_pipe, "text_encoder", None)
+            print(
+                f"[diffusers] TE dtype after controlnet from_pipe: "
+                f"{next(_te_after_cn.parameters()).dtype if _te_after_cn is not None else None}",
+                flush=True,
+            )
+
+            # Same VRAM choreography as the main Qwen txt2img/img2img path
+            # below: park the DiT fully before loading the 7B text encoder
+            # so it actually fits, encode via embeds, park TE back off, then
+            # place the DiT for denoise. Skipping this (a plain prompt=...
+            # call, letting the pipeline's own encode_prompt run with the
+            # DiT still occupying the card from _place_compiled_pipe) caused
+            # a cuda/cpu device-mismatch crash on a card with only a few GB
+            # free — confirmed via GPU smoke test.
+            te = getattr(cn_pipe, "text_encoder", None)
+            transformer = getattr(cn_pipe, "transformer", None)
+            vae = getattr(cn_pipe, "vae", None)
+            controlnet_module = getattr(cn_pipe, "controlnet", None)
+            if vae is not None:
+                try:
+                    vae.to("cpu")
+                except Exception:
+                    pass
+            if transformer is not None:
+                self._force_module_cpu(transformer)
+                self._unet_resident = False
+            # The ControlNet submodule from_pipe() just attached is loaded
+            # fresh each time (no group-offload hooks of its own yet) — park
+            # it too, same as transformer/vae, so it isn't quietly occupying
+            # GPU memory while the 7B text encoder needs the room.
+            if controlnet_module is not None:
+                self._force_module_cpu(controlnet_module)
+            self._empty_cuda()
+            _own_alloc_mb = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
+            _own_reserved_mb = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
+            print(
+                f"[diffusers] pre-TE VRAM free≈{self._cuda_free_mb():.0f}MiB "
+                f"(DiT cuda≈{self._cuda_param_mb(transformer):.0f}MiB, "
+                f"controlnet cuda≈{self._cuda_param_mb(controlnet_module):.0f}MiB, "
+                f"this-process allocated≈{_own_alloc_mb:.0f}MiB "
+                f"reserved≈{_own_reserved_mb:.0f}MiB)",
+                flush=True,
+            )
+
+            # No fallback to a plain prompt= call here: cn_pipe's own
+            # internal encode_prompt() needs the exact same TE-on-GPU
+            # placement this block already does by hand (confirmed via GPU
+            # smoke test — a bare prompt= call hit the identical cuda/cpu
+            # device-mismatch this block exists to avoid). If the embed
+            # step fails, let it fail loudly instead of quietly retrying a
+            # path that's already proven broken here.
+            if te is None or not hasattr(cn_pipe, "encode_prompt"):
+                raise RuntimeError(
+                    "Qwen ControlNet pipeline has no text_encoder/"
+                    "encode_prompt to place onto the GPU by hand — can't "
+                    "safely run the embed path this VRAM budget needs."
+                )
+            try:
+                self._bulk_module_to_cuda(te, torch.device("cuda"))
+                prompt_embeds, prompt_embeds_mask = cn_pipe.encode_prompt(
+                    prompt=shaped_prompt,
+                    device=torch.device("cuda"),
+                    num_images_per_prompt=1,
+                )
+                negative_prompt_embeds = None
+                negative_prompt_embeds_mask = None
+                if shaped_negative.strip() and cfg > 1.01:
+                    negative_prompt_embeds, negative_prompt_embeds_mask = (
+                        cn_pipe.encode_prompt(
+                            prompt=shaped_negative,
+                            device=torch.device("cuda"),
+                            num_images_per_prompt=1,
+                        )
+                    )
+            finally:
+                self._force_module_cpu(te)
+                self._empty_cuda()
+
+            cn_pipe = self._place_compiled_pipe(
+                cn_pipe,
+                torch.bfloat16,
+                prefer_offload=True,
+                pixel_count=max(1, int(gen_width) * int(gen_height)),
+            )
+
+            cn_kwargs: dict[str, Any] = {
+                "prompt_embeds": prompt_embeds,
+                "control_image": control_image,
+                "controlnet_conditioning_scale": float(controlnet_strength),
+                "width": gen_width,
+                "height": gen_height,
+                "num_inference_steps": step_count,
+                "generator": generator,
+            }
+            if prompt_embeds_mask is not None:
+                cn_kwargs["prompt_embeds_mask"] = prompt_embeds_mask
+            if negative_prompt_embeds is not None:
+                cn_kwargs["negative_prompt_embeds"] = negative_prompt_embeds
+                if negative_prompt_embeds_mask is not None:
+                    cn_kwargs["negative_prompt_embeds_mask"] = (
+                        negative_prompt_embeds_mask
+                    )
+
+            try:
+                import inspect
+
+                sig = inspect.signature(cn_pipe.__call__)
+                if "true_cfg_scale" in sig.parameters:
+                    cn_kwargs["true_cfg_scale"] = cfg
+                elif "guidance_scale" in sig.parameters:
+                    cn_kwargs["guidance_scale"] = cfg
+                if "callback_on_step_end" in sig.parameters:
+                    cn_kwargs["callback_on_step_end"] = callback_on_step_end
+            except Exception:
+                cn_kwargs.setdefault("true_cfg_scale", cfg)
+                if callback_on_step_end is not None:
+                    cn_kwargs.setdefault("callback_on_step_end", callback_on_step_end)
+
+            print(
+                f"[diffusers] compiled-qwen controlnet({controlnet_preprocessor}) "
+                f"model={Path(model_path).name} cn={Path(controlnet_path).name} "
+                f"{gen_width}x{gen_height} steps={step_count} cfg={cfg} "
+                f"strength={controlnet_strength:.2f}",
+                flush=True,
+            )
+            try:
+                result = cn_pipe(**cn_kwargs)
+                return result.images[0]
+            except Exception:
+                try:
+                    self._release_pipe()
+                except Exception:
+                    pass
+                raise
+            finally:
+                self._empty_cuda()
+
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
+        use_inpaint = (
+            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
+        )
         init_image: Image.Image | None = None
+        mask_image: Image.Image | None = None
         if use_img2img:
             init_image = Image.open(init_image_path).convert("RGB")
             init_image = init_image.resize(
                 (gen_width, gen_height), Image.Resampling.LANCZOS
             )
+            if use_inpaint:
+                mask_image = Image.open(mask_image_path).convert("L")
+                mask_image = mask_image.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+
+            # Unlike Flux's unified pipeline (image/mask_image already in its
+            # __call__ signature), QwenImagePipeline is txt2img-only — the
+            # signature check below always failed for img2img/inpaint until
+            # this swap was added (confirmed via GPU smoke test: "Qwen
+            # img2img requires a pipeline that accepts image+strength" fired
+            # every time because the plain pipe never had that parameter).
+            # from_pipe() reuses every already-loaded component, same as the
+            # SDXL/Flux/Qwen ControlNet swaps above.
+            _te_before = getattr(pipe, "text_encoder", None)
+            print(
+                f"[diffusers] TE dtype before img2img/inpaint from_pipe: "
+                f"{next(_te_before.parameters()).dtype if _te_before is not None else None}",
+                flush=True,
+            )
+            try:
+                if use_inpaint:
+                    from diffusers import QwenImageInpaintPipeline
+
+                    pipe = QwenImageInpaintPipeline.from_pipe(pipe)
+                else:
+                    from diffusers import QwenImageImg2ImgPipeline
+
+                    pipe = QwenImageImg2ImgPipeline.from_pipe(pipe)
+                self._restore_pipe_component_dtype(pipe, dtype)
+                _te_after = getattr(pipe, "text_encoder", None)
+                print(
+                    f"[diffusers] TE dtype after img2img/inpaint from_pipe: "
+                    f"{next(_te_after.parameters()).dtype if _te_after is not None else None}",
+                    flush=True,
+                )
+            except ImportError:
+                pass  # fall back to the plain pipe; the signature check
+                # below still raises a clear error rather than a confusing
+                # one if this diffusers version truly lacks these classes.
 
         kwargs: dict[str, Any] = {
             "width": gen_width,
@@ -3428,6 +4273,8 @@ class PipelineHolder:
         if init_image is not None:
             kwargs["image"] = init_image
             kwargs["strength"] = strength
+        if mask_image is not None:
+            kwargs["mask_image"] = mask_image
         # Qwen-Image uses true_cfg_scale; fall back to guidance_scale if needed.
         try:
             import inspect
@@ -3440,6 +4287,11 @@ class PipelineHolder:
             if init_image is not None and "image" not in sig.parameters:
                 raise RuntimeError(
                     "Qwen img2img requires a pipeline that accepts image+strength."
+                )
+            if mask_image is not None and "mask_image" not in sig.parameters:
+                raise RuntimeError(
+                    "Qwen inpaint requires a pipeline that accepts mask_image; "
+                    "this checkpoint only supports full-image img2img via Diffusers."
                 )
         except RuntimeError:
             raise
@@ -3457,7 +4309,14 @@ class PipelineHolder:
             te = getattr(pipe, "text_encoder", None)
             transformer = getattr(pipe, "transformer", None)
             vae = getattr(pipe, "vae", None)
-            if vae is not None:
+            # Only park VAE ahead of the TE encode for pure txt2img. img2img/
+            # inpaint needs the VAE resident on GPU to encode init_image
+            # inside this same pipe() call (mirrored by the guard below,
+            # right before prepare_latents runs) — parking it here and never
+            # un-parking it left the VAE running on CPU for the whole call,
+            # which is what produced silently-wrong-dtype latents feeding
+            # into img_in. See CHANGELOG for the GPU smoke-test trace.
+            if vae is not None and init_image is None:
                 try:
                     vae.to("cpu")
                 except Exception:
@@ -3472,13 +4331,27 @@ class PipelineHolder:
                 self._force_module_cpu(transformer)
                 self._unet_resident = False
             self._empty_cuda()
+            _own_alloc_mb = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
+            _own_reserved_mb = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
             print(
                 f"[diffusers] pre-TE VRAM free≈{self._cuda_free_mb():.0f}MiB "
-                f"(DiT cuda≈{self._cuda_param_mb(transformer):.0f}MiB)",
+                f"(DiT cuda≈{self._cuda_param_mb(transformer):.0f}MiB, "
+                f"this-process allocated≈{_own_alloc_mb:.0f}MiB "
+                f"reserved≈{_own_reserved_mb:.0f}MiB)",
                 flush=True,
             )
             if te is not None and hasattr(pipe, "encode_prompt"):
-                te.to(torch.device("cuda"))
+                self._bulk_module_to_cuda(te, torch.device("cuda"))
+                _te_alloc_mb = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
+                _te_reserved_mb = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
+                _te_param_mb = self._cuda_param_mb(te)
+                print(
+                    f"[diffusers] post-TE-transfer this-process "
+                    f"allocated≈{_te_alloc_mb:.0f}MiB reserved≈{_te_reserved_mb:.0f}MiB "
+                    f"(TE params≈{_te_param_mb:.0f}MiB, delta over params≈"
+                    f"{_te_alloc_mb - _own_alloc_mb - _te_param_mb:.0f}MiB)",
+                    flush=True,
+                )
                 prompt_embeds, prompt_mask = pipe.encode_prompt(
                     prompt=shaped_prompt,
                     device=torch.device("cuda"),
@@ -3509,28 +4382,46 @@ class PipelineHolder:
                     flush=True,
                 )
         except Exception as exc:
-            print(f"[diffusers] Qwen embed path failed ({exc}); using prompt=", flush=True)
-            kwargs.pop("prompt_embeds", None)
-            kwargs.pop("prompt_embeds_mask", None)
-            kwargs.pop("negative_prompt_embeds", None)
-            kwargs.pop("negative_prompt_embeds_mask", None)
-            used_embeds = False
+            # Do NOT fall back to prompt= here. That lets the pipeline's own
+            # internal encode_prompt() run with the text encoder wherever it
+            # was left (often CPU, after an OOM above) — a nominally-bf16
+            # module executed on CPU can silently emit float32 output (CPU
+            # kernels don't fully cover bf16), which downstream shows up as
+            # "mat1 and mat2 must have the same dtype" inside the transformer
+            # (img_in) many steps later, far from the real cause. Fail loud
+            # with the actual error (usually a CUDA OOM) instead.
+            print(f"[diffusers] Qwen embed path failed: {exc}", flush=True)
             try:
                 self._force_module_cpu(getattr(pipe, "text_encoder", None))
                 self._empty_cuda()
             except Exception:
                 pass
+            try:
+                self._release_pipe()
+            except Exception:
+                pass
+            raise
 
-        if not used_embeds:
-            kwargs["prompt"] = shaped_prompt
-            if shaped_negative.strip():
-                kwargs["negative_prompt"] = shaped_negative
-
-        # Keep VAE on CPU during DiT denoise; decode latents afterward.
-        try:
-            self._force_module_cpu(getattr(pipe, "vae", None))
-        except Exception:
-            pass
+        # Keep VAE on CPU during DiT denoise for pure txt2img (it isn't
+        # touched again until the manual decode below). img2img/inpaint is
+        # different: QwenImageImg2ImgPipeline/QwenImageInpaintPipeline needs
+        # the VAE to encode init_image INSIDE this same call — parking it to
+        # CPU first produced silently-wrong-dtype latents (float32 VAE
+        # output never got cast to the bf16 transformer expects) and a
+        # "mat1 and mat2 must have the same dtype" crash in img_in, found
+        # via GPU smoke test. Leaving VAE on GPU costs some VRAM but is what
+        # correctness requires here.
+        if init_image is None:
+            try:
+                self._force_module_cpu(getattr(pipe, "vae", None))
+            except Exception:
+                pass
+        # For img2img/inpaint, VAE placement onto GPU happens further down,
+        # right before pipe(**kwargs) — putting it here doesn't stick,
+        # because the DiT placement/group-offload logic between here and
+        # there unconditionally force-parks VAE back to CPU as a side
+        # effect of clearing the card for the transformer (confirmed via
+        # GPU smoke test). See the comment at that later placement call.
         kwargs["output_type"] = "latent"
 
         pixels = int(gen_width) * int(gen_height)
@@ -3578,7 +4469,28 @@ class PipelineHolder:
                     pipe, num_blocks=want, pixel_count=pixels
                 )
 
-        qwen_mode = "img2img" if init_image is not None else "txt2img"
+        if init_image is not None:
+            # Last word before pipe(**kwargs): _try_unet_resident()/
+            # _rearm_qwen_group_offload() above both unconditionally force
+            # VAE back to CPU as part of clearing the card for the DiT
+            # (they don't know this is img2img/inpaint and the VAE needs to
+            # stay resident) — confirmed via GPU smoke test that the earlier
+            # "else: vae.to(cuda)" placement got silently undone by exactly
+            # this, reproducing the same "Input type (CUDABFloat16Type) and
+            # weight type (CPUBFloat16Type)" crash. Placing it here, after
+            # all DiT placement logic has run, is what actually sticks.
+            vae_mod = getattr(pipe, "vae", None)
+            if vae_mod is not None:
+                try:
+                    vae_mod.to(device=torch.device("cuda"), dtype=dtype)
+                except Exception as exc:
+                    print(f"[diffusers] VAE →cuda for img2img/inpaint failed: {exc}", flush=True)
+
+        qwen_mode = (
+            "inpaint" if mask_image is not None
+            else "img2img" if init_image is not None
+            else "txt2img"
+        )
         print(
             f"[diffusers] compiled-qwen {qwen_mode} model={Path(model_path).name} "
             f"{gen_width}x{gen_height} steps={step_count} cfg={cfg} "
@@ -3616,6 +4528,25 @@ class PipelineHolder:
                     pipe, num_blocks=half, pixel_count=pixels
                 ):
                     raise
+                if init_image is not None:
+                    # _rearm_qwen_group_offload() force-parks VAE to CPU too
+                    # (same as the residency logic before the first attempt)
+                    # — the retried pipe(**kwargs) call re-runs
+                    # prepare_latents() from scratch, which needs VAE back
+                    # on GPU to re-encode init_image. Confirmed via GPU
+                    # smoke test: without this the retry hits the same
+                    # "Input type (CUDABFloat16Type) and weight type
+                    # (CPUBFloat16Type)" crash the first fix already solved
+                    # for the non-retry path.
+                    vae_mod = getattr(pipe, "vae", None)
+                    if vae_mod is not None:
+                        try:
+                            vae_mod.to(device=torch.device("cuda"), dtype=dtype)
+                        except Exception as exc:
+                            print(
+                                f"[diffusers] VAE →cuda retry-placement failed: {exc}",
+                                flush=True,
+                            )
                 latents = _denoise_latents()
 
             print(

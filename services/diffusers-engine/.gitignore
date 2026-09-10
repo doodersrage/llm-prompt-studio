@@ -9,3 +9,5 @@ loras/*
 !loras/.gitkeep
 checkpoints/*
 !checkpoints/.gitkeep
+controlnets/*
+!controlnets/.gitkeep
