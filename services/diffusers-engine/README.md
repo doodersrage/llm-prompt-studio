@@ -64,12 +64,15 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   re-download when the drop-in is present.
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint stays unsupported — no mask-capable pipeline for it.
-- **Still not attempted: IP-Adapter/InstantID/PuLID identity lock, FaceDetailer.** Both are
-  third-party ComfyUI custom nodes (Impact-Pack, IPAdapter-Plus) whose exact input schema
-  and checkpoint key layout (open_clip → HF CLIP-vision remap for IP-Adapter; detector
-  provider chains for FaceDetailer) need verifying against a real checkpoint/live install —
-  not safe to guess blind without a live ComfyUI install + real checkpoints to verify
-  against.
+- **Still not attempted: InstantID / PuLID / FaceDetailer.** InstantID needs
+  InsightFace + a face ControlNet; PuLID (Flux) needs EVA-CLIP + attention hooks;
+  FaceDetailer is Impact Pack. Keep those on ComfyUI.
+- **SDXL IP-Adapter identity lock is native.** `IPAdapterModelLoader` →
+  `IPAdapterAdvanced` → `LoadImage` compiles on SDXL via Diffusers
+  `IPAdapterMixin`. Classic Plus weights load locally; Comfy FaceID/PuLID-SDXL
+  drop-ins (`image_proj.mapping_*`) fall back to hub
+  `h94/IP-Adapter` / `ip-adapter-plus_sdxl_vit-h.safetensors` so identity lock
+  still works. Not combined with ControlNet or img2img yet.
 - **Final/Max enrich upscale is native:** `UpscaleModelLoader` / `ImageUpscaleWithModel`
   run through Spandrel (same `.pth` files as Comfy `models/upscale_models`), then optional
   `ImageScaleBy` / `ImageBlur` via Pillow — so enrich graphs no longer force a Comfy

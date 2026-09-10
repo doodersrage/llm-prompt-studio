@@ -295,6 +295,57 @@ def test_flux_inpaint() -> None:
     _save("flux_inpaint", image)
 
 
+def test_sdxl_ip_adapter() -> None:
+    """SDXL txt2img + IP-Adapter identity lock.
+
+    Local Comfy drop-in is often FaceID/PuLID (``mapping_*`` layout) — the
+    engine falls back to hub ``h94/IP-Adapter`` Plus weights. This smoke
+    exercises that path end-to-end.
+    """
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    ref = Image.new("RGB", (512, 512), (210, 180, 160))
+    draw = ImageDraw.Draw(ref)
+    draw.ellipse((160, 120, 352, 340), fill=(90, 60, 45))
+    draw.ellipse((200, 200, 230, 230), fill=(20, 20, 20))
+    draw.ellipse((282, 200, 312, 230), fill=(20, 20, 20))
+    ref_src = OUT_DIR / "sdxl_ip_adapter_ref.png"
+    ref.save(ref_src)
+
+    # Prefer classic Plus if present; else FaceID/PuLID → hub fallback.
+    ip_dir = MODELS / "ipadapter"
+    classic = ip_dir / "ip-adapter-plus_sdxl_vit-h.safetensors"
+    faceid = ip_dir / "ip-adapter_pulid_sdxl_fp16.safetensors"
+    if classic.is_file():
+        ip_path = str(classic)
+    elif faceid.is_file():
+        ip_path = str(faceid)
+    else:
+        ip_path = None
+
+    image = pipeline_holder.generate_compiled_sdxl(
+        checkpoint_path=_p("checkpoints", "RealVisXL_V5.0_fp16.safetensors"),
+        vae_name=None,
+        loras=[],
+        prompt="portrait photo of the same person, studio lighting, sharp focus",
+        negative_prompt="blurry, low quality, different face",
+        width=512,
+        height=512,
+        steps=8,
+        guidance_scale=5.5,
+        seed=42,
+        init_image_path=None,
+        mask_image_path=None,
+        img2img_mode="txt2img",
+        denoise=1.0,
+        ip_adapter_path=ip_path,
+        ip_adapter_image_path=str(ref_src),
+        ip_adapter_strength=0.7,
+    )
+    _save("sdxl_ip_adapter", image)
+
+
 def test_qwen_inpaint() -> None:
     """Qwen native inpaint (InpaintModelConditioning path)."""
     from PIL import Image, ImageDraw
@@ -330,6 +381,7 @@ def test_qwen_inpaint() -> None:
 
 TESTS = {
     "sdxl_controlnet_union": test_sdxl_controlnet_union,
+    "sdxl_ip_adapter": test_sdxl_ip_adapter,
     "flux_controlnet_union": test_flux_controlnet_union,
     "flux_controlnet_xlabs_rejected": test_flux_controlnet_xlabs_rejected,
     "qwen_controlnet_union": test_qwen_controlnet_union,

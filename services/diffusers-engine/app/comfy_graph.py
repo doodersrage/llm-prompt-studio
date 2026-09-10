@@ -51,6 +51,15 @@ _POST_OK = frozenset(
     }
 )
 
+# SDXL-only native identity lock (Diffusers IPAdapterMixin).
+_IPADAPTER_OK = frozenset(
+    {
+        "IPAdapterModelLoader",
+        "IPAdapterAdvanced",
+        "CLIPVisionLoader",
+    }
+)
+
 _SDXL_OK = frozenset(
     {
         "CheckpointLoaderSimple",
@@ -61,6 +70,7 @@ _SDXL_OK = frozenset(
         *_INPAINT_OK,
         *_CONTROLNET_OK,
         *_POST_OK,
+        *_IPADAPTER_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -114,13 +124,18 @@ _QWEN_OK = frozenset(
 _ALWAYS_UNSUPPORTED = frozenset(
     {
         "DiffControlNetLoader",
-        "IPAdapterModelLoader",
-        "IPAdapterAdvanced",
+        # InstantID / PuLID stay Comfy-only (InsightFace + ControlNet / Flux hooks).
+        # SDXL IP-Adapter is native — see _IPADAPTER_OK.
         "InstantIDModelLoader",
         "ApplyInstantID",
+        "InstantIDFaceAnalysis",
         "PulidModelLoader",
+        "PulidEvaClipLoader",
         "ApplyPulid",
         "ApplyPulidFlux",
+        "PulidFluxModelLoader",
+        "PulidFluxEvaClipLoader",
+        "PulidFluxInsightFaceLoader",
         "FaceDetailer",
         "WanImageToVideo",
         "HunyuanImageToVideo",
@@ -172,6 +187,10 @@ class CompiledWorkflow:
     output_scale: float = 1.0
     # Optional ImageBlur radius applied before output_scale (Comfy soft pass).
     output_blur_radius: float | None = None
+    # SDXL IP-Adapter identity lock (IPAdapterModelLoader → IPAdapterAdvanced).
+    ip_adapter_model: str | None = None
+    ip_adapter_image: str | None = None
+    ip_adapter_strength: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -449,6 +468,41 @@ def _trace_output_post(
     return upscale_model, scale, blur_radius
 
 
+def _trace_ip_adapter(
+    nodes: dict[str, dict[str, Any]],
+) -> tuple[str | None, str | None, float] | None:
+    """Find IPAdapterAdvanced + loader + reference LoadImage (SDXL identity)."""
+    apply_node = next(
+        (n for n in nodes.values() if n["class_type"] == "IPAdapterAdvanced"),
+        None,
+    )
+    if apply_node is None:
+        # Also accept bare IPAdapterModelLoader without Advanced (rare).
+        if not any(n["class_type"] == "IPAdapterModelLoader" for n in nodes.values()):
+            return None
+        return None
+
+    inputs = apply_node["inputs"]
+    loader = nodes.get(_link_id(inputs.get("ipadapter")) or "", {})
+    model_name: str | None = None
+    if loader.get("class_type") == "IPAdapterModelLoader":
+        model_name = _as_str(loader["inputs"].get("ipadapter_file")).strip() or None
+        if model_name and model_name.startswith("{{"):
+            model_name = None
+
+    image_id = _link_id(inputs.get("image"))
+    image_name = _resolve_load_image_name(nodes, image_id)
+    if not image_name:
+        return None
+
+    strength = _as_float(
+        inputs.get("weight", inputs.get("strength", inputs.get("ip_weight"))),
+        0.5,
+    )
+    strength = max(0.0, min(1.0, strength))
+    return model_name, image_name, strength
+
+
 def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     nodes = _nodes(graph)
     if not nodes:
@@ -613,6 +667,41 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         controlnet_info if controlnet_info is not None else (None, None, "none", 1.0)
     )
     upscale_model, output_scale, output_blur_radius = _trace_output_post(nodes)
+    ip_adapter_info = _trace_ip_adapter(nodes)
+    has_ipadapter_node = any(
+        n["class_type"] in ("IPAdapterAdvanced", "IPAdapterModelLoader")
+        for n in nodes.values()
+    )
+    if has_ipadapter_node and ip_adapter_info is None:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "IP-Adapter present but could not resolve a reference LoadImage "
+                "(IPAdapterModelLoader → IPAdapterAdvanced → LoadImage required)."
+            ),
+        )
+    if ip_adapter_info is not None and family != "sdxl":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="Native IP-Adapter identity lock is SDXL-only — use ComfyUI for Flux/Qwen.",
+        )
+    if ip_adapter_info is not None and img2img_mode != "txt2img":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="IP-Adapter combined with img2img/inpaint is not supported yet.",
+        )
+    if ip_adapter_info is not None and controlnet_info is not None:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="IP-Adapter combined with ControlNet is not supported yet — use ComfyUI.",
+        )
+    ip_adapter_model, ip_adapter_image, ip_adapter_strength = (
+        ip_adapter_info if ip_adapter_info is not None else (None, None, 0.5)
+    )
 
     compiled = CompiledWorkflow(
         family=family,
@@ -646,6 +735,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         upscale_model=upscale_model,
         output_scale=output_scale,
         output_blur_radius=output_blur_radius,
+        ip_adapter_model=ip_adapter_model,
+        ip_adapter_image=ip_adapter_image,
+        ip_adapter_strength=ip_adapter_strength,
     )
     return ClassifyResult(
         supported=True,

@@ -94,6 +94,18 @@ def execute_compiled(
             if compiled.controlnet_image
             else None
         )
+        ip_adapter_path = None
+        if compiled.ip_adapter_model:
+            ip_adapter_path = resolve_asset_file(
+                compiled.ip_adapter_model, "ipadapters", "controlnets"
+            )
+            if ip_adapter_path is not None:
+                ip_adapter_path = str(ip_adapter_path)
+        ip_adapter_image_path = (
+            _resolve_input_image(compiled.ip_adapter_image)
+            if compiled.ip_adapter_image
+            else None
+        )
         image = pipeline_holder.generate_compiled_sdxl(
             checkpoint_path=ckpt,
             vae_name=compiled.vae,
@@ -114,6 +126,9 @@ def execute_compiled(
             controlnet_image_path=controlnet_image_path,
             controlnet_preprocessor=compiled.controlnet_preprocessor,
             controlnet_strength=compiled.controlnet_strength,
+            ip_adapter_path=ip_adapter_path,
+            ip_adapter_image_path=ip_adapter_image_path,
+            ip_adapter_strength=compiled.ip_adapter_strength,
         )
         return _apply_output_post(compiled, image)
 
@@ -240,4 +255,7 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "upscale_model": compiled.upscale_model,
         "output_scale": compiled.output_scale,
         "output_blur_radius": compiled.output_blur_radius,
+        "ip_adapter_model": compiled.ip_adapter_model,
+        "ip_adapter_image": compiled.ip_adapter_image,
+        "ip_adapter_strength": compiled.ip_adapter_strength,
     }

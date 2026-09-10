@@ -466,6 +466,68 @@ class ComfyGraphTests(unittest.TestCase):
         graph[ksampler_id]["inputs"]["negative"] = ["33", 1]
         return graph
 
+    def test_compiles_sdxl_ip_adapter(self) -> None:
+        graph = _sdxl_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "IPAdapterModelLoader",
+            "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+        }
+        graph["52"] = {
+            "class_type": "IPAdapterAdvanced",
+            "inputs": {
+                "model": ["1", 0],
+                "ipadapter": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.65,
+                "weight_type": "linear",
+                "combine_embeds": "concat",
+                "start_at": 0.0,
+                "end_at": 1.0,
+                "embeds_scaling": "V only",
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["52", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(
+            result.compiled.ip_adapter_model, "ip-adapter-plus_sdxl_vit-h.safetensors"
+        )
+        self.assertEqual(result.compiled.ip_adapter_image, "face-ref.png")
+        self.assertAlmostEqual(result.compiled.ip_adapter_strength, 0.65)
+
+    def test_ip_adapter_unsupported_on_flux(self) -> None:
+        graph = _flux_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "IPAdapterModelLoader",
+            "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+        }
+        graph["52"] = {
+            "class_type": "IPAdapterAdvanced",
+            "inputs": {
+                "model": ["1", 0],
+                "ipadapter": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.5,
+            },
+        }
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertTrue(
+            "IP-Adapter" in result.reason or "ipadapter" in result.reason.lower()
+            or result.unsupported_nodes
+            or "unknown" in result.reason.lower()
+            or "SDXL" in result.reason
+        )
+
     def test_compiles_sdxl_with_upscale_and_scale_by(self) -> None:
         graph = _sdxl_graph()
         graph["40"] = {

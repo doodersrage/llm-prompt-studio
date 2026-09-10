@@ -65,7 +65,7 @@ def _infer_asset_family(name: str) -> str:
 def _is_picker_weight(name: str, *, bucket: str) -> bool:
     """Skip obvious non-base weights from Studio pickers."""
     token = _normalize_token(name)
-    if bucket != "controlnets" and any(
+    if bucket not in ("controlnets", "ipadapters", "upscale_models") and any(
         n in token for n in ("lora", "controlnet", "ipadapter", "embedding")
     ):
         return False
@@ -168,6 +168,14 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         )
         if p is not None
     ]
+    ipadapter_roots = [
+        p
+        for p in (
+            _comfy_subdir("models", "ipadapter"),
+            _service_dir("ipadapters"),
+        )
+        if p is not None
+    ]
 
     return {
         "checkpoints": _list_bucket(
@@ -188,6 +196,9 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         ),
         "upscale_models": _list_bucket(
             "upscale_models", upscale_roots, family_fn=lambda n: "other"
+        ),
+        "ipadapters": _list_bucket(
+            "ipadapters", ipadapter_roots, family_fn=lambda n: "other"
         ),
     }
 

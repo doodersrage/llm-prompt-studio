@@ -582,6 +582,7 @@ class PipelineHolder:
         self._group_offload_blocks: int = GROUP_OFFLOAD_BLOCKS
         self._controlnet_key: str | None = None
         self._controlnet_model: Any = None
+        self._ip_adapter_key: str | None = None
 
     def describe(self) -> tuple[str, str, bool]:
         if MOCK_MODE:
@@ -1195,6 +1196,7 @@ class PipelineHolder:
         self._unet_resident = False
         self._controlnet_key = None
         self._controlnet_model = None
+        self._ip_adapter_key = None
         if pipe is not None:
             try:
                 self._park_pipe(pipe)
@@ -2086,13 +2088,16 @@ class PipelineHolder:
         controlnet_image_path: str | None = None,
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
+        ip_adapter_path: str | None = None,
+        ip_adapter_image_path: str | None = None,
+        ip_adapter_strength: float = 0.5,
     ) -> Image.Image:
         """
         Native SDXL from a Comfy graph — same quality stack as txt2img
         (CLIP fit, hand LoRA, RealVis CFG, fp32 VAE decode).
-        ControlNet (Canny only, SDXL only) inserts StableDiffusionXLControlNetPipeline
-        ahead of the plain txt2img call below; it never combines with img2img/inpaint
-        (comfy_graph.compile_workflow already rejects that combination).
+        ControlNet (Canny/OpenPose/depth) and IP-Adapter identity lock are
+        mutually exclusive and never combine with img2img/inpaint
+        (comfy_graph.compile_workflow already rejects those combinations).
         """
         import torch
         from diffusers import (
@@ -2132,11 +2137,11 @@ class PipelineHolder:
                             )
                         except Exception as exc:
                             print(f"[diffusers] compiled VAE load failed: {exc}", flush=True)
-                            self._upgrade_sdxl_vae(pipe)
+                            self._attach_sdxl_vae(pipe, torch.float32)
                     else:
-                        self._upgrade_sdxl_vae(pipe)
+                        self._attach_sdxl_vae(pipe, torch.float32)
                 else:
-                    self._upgrade_sdxl_vae(pipe)
+                    self._attach_sdxl_vae(pipe, torch.float32)
                 pipe.scheduler = DPMSolverMultistepScheduler.from_config(
                     pipe.scheduler.config,
                     use_karras_sigmas=True,
@@ -2398,6 +2403,28 @@ class PipelineHolder:
                 on_step(plan.steps, plan.steps)
             return image
 
+        use_ip_adapter = (
+            not use_img2img
+            and not use_controlnet
+            and ip_adapter_image_path is not None
+        )
+        if use_ip_adapter:
+            self._ensure_sdxl_ip_adapter(
+                pipe,
+                model_path=ip_adapter_path,
+                strength=ip_adapter_strength,
+            )
+            ip_image = Image.open(ip_adapter_image_path).convert("RGB")
+            ip_image = ip_image.resize(
+                (gen_width, gen_height), Image.Resampling.LANCZOS
+            )
+            ip_adapter_image_embeds = self._sdxl_ip_adapter_image_embeds(
+                pipe, ip_image, device=device_for_gen
+            )
+        else:
+            self._clear_sdxl_ip_adapter(pipe)
+            ip_adapter_image_embeds = None
+
         run_kwargs: dict[str, Any] = {
             "width": gen_width,
             "height": gen_height,
@@ -2408,12 +2435,22 @@ class PipelineHolder:
             "guidance_rescale": 0.7,
         }
         run_kwargs.update(encode_kwargs)
-        print(
-            f"[diffusers] compiled-sdxl model={path.name} "
-            f"{gen_width}x{gen_height} steps={plan.steps} "
-            f"cfg={plan.guidance_scale}",
-            flush=True,
-        )
+        if use_ip_adapter:
+            run_kwargs["ip_adapter_image_embeds"] = ip_adapter_image_embeds
+            print(
+                f"[diffusers] compiled-sdxl ip-adapter model={path.name} "
+                f"strength={float(ip_adapter_strength):.2f} "
+                f"{gen_width}x{gen_height} steps={plan.steps} "
+                f"cfg={plan.guidance_scale}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[diffusers] compiled-sdxl model={path.name} "
+                f"{gen_width}x{gen_height} steps={plan.steps} "
+                f"cfg={plan.guidance_scale}",
+                flush=True,
+            )
 
         try:
             with _silence_model_warnings():
@@ -2423,6 +2460,12 @@ class PipelineHolder:
             self._empty_cuda()
             run_kwargs["width"] = 768
             run_kwargs["height"] = 768
+            if use_ip_adapter and ip_adapter_image_embeds is not None:
+                # Re-encode at the fallback size so spatial tokens stay aligned.
+                ip_small = ip_image.resize((768, 768), Image.Resampling.LANCZOS)
+                run_kwargs["ip_adapter_image_embeds"] = self._sdxl_ip_adapter_image_embeds(
+                    pipe, ip_small, device=device_for_gen
+                )
             run_kwargs["generator"] = torch.Generator(device=device_for_gen).manual_seed(
                 int(seed) & 0xFFFFFFFF
             )
@@ -2457,6 +2500,136 @@ class PipelineHolder:
         if on_step:
             on_step(plan.steps, plan.steps)
         return image
+
+    def _ensure_sdxl_ip_adapter(
+        self,
+        pipe: Any,
+        *,
+        model_path: str | None,
+        strength: float,
+    ) -> None:
+        """Attach Diffusers IP-Adapter Plus weights for SDXL identity lock.
+
+        CLIP ViT-H is large — load it on CPU (by parking the SDXL modules first
+        so ``load_ip_adapter`` targets ``self.device == cpu``), then restore the
+        UNet/TEs/VAE to CUDA. Callers should pass precomputed
+        ``ip_adapter_image_embeds`` (see ``_sdxl_ip_adapter_image_embeds``).
+        """
+        from app.ip_adapter_resolve import resolve_sdxl_ip_adapter_load
+
+        load = resolve_sdxl_ip_adapter_load(model_path)
+        key = str(load["source"])
+        if self._ip_adapter_key != key:
+            self._clear_sdxl_ip_adapter(pipe)
+            print(f"[diffusers] loading IP-Adapter ({load['source']})…", flush=True)
+            parked: list[tuple[str, Any]] = []
+            for attr in ("unet", "text_encoder", "text_encoder_2", "vae"):
+                mod = getattr(pipe, attr, None)
+                if mod is None:
+                    continue
+                try:
+                    device = next(mod.parameters()).device
+                except StopIteration:
+                    continue
+                try:
+                    mod.to("cpu")
+                    parked.append((attr, device))
+                except Exception:
+                    pass
+            self._empty_cuda()
+            try:
+                if load.get("preload_hub_image_encoder"):
+                    from transformers import CLIPVisionModelWithProjection
+
+                    from app.ip_adapter_resolve import (
+                        HUB_IP_ADAPTER_IMAGE_ENCODER,
+                        HUB_IP_ADAPTER_REPO,
+                    )
+
+                    if getattr(pipe, "image_encoder", None) is None:
+                        print(
+                            "[diffusers] loading IP-Adapter image encoder "
+                            f"({HUB_IP_ADAPTER_REPO}/{HUB_IP_ADAPTER_IMAGE_ENCODER})…",
+                            flush=True,
+                        )
+                        enc = CLIPVisionModelWithProjection.from_pretrained(
+                            HUB_IP_ADAPTER_REPO,
+                            subfolder=HUB_IP_ADAPTER_IMAGE_ENCODER,
+                            torch_dtype=getattr(pipe, "dtype", None),
+                        ).to("cpu")
+                        pipe.register_modules(image_encoder=enc)
+                pipe.load_ip_adapter(
+                    load["pretrained_model_name_or_path_or_dict"],
+                    subfolder=load["subfolder"] or "",
+                    weight_name=load["weight_name"],
+                    image_encoder_folder=load.get("image_encoder_folder"),
+                )
+            finally:
+                for attr, device in parked:
+                    try:
+                        getattr(pipe, attr).to(device)
+                    except Exception:
+                        pass
+            # Keep ViT-H on CPU; denoise uses precomputed image embeds.
+            try:
+                if getattr(pipe, "image_encoder", None) is not None:
+                    pipe.image_encoder.to("cpu")
+            except Exception:
+                pass
+            self._empty_cuda()
+            self._ip_adapter_key = key
+        pipe.set_ip_adapter_scale(max(0.0, min(1.0, float(strength))))
+
+    def _sdxl_ip_adapter_image_embeds(
+        self,
+        pipe: Any,
+        ip_image: Any,
+        *,
+        device: str,
+    ) -> list[Any]:
+        """Run the IP-Adapter image encoder (CPU) and move embeds to ``device``."""
+        import torch
+
+        enc = getattr(pipe, "image_encoder", None)
+        if enc is None:
+            enc = getattr(pipe, "_studio_ip_image_encoder", None)
+            if enc is not None:
+                pipe.image_encoder = enc
+        if getattr(pipe, "image_encoder", None) is None:
+            raise RuntimeError("IP-Adapter image_encoder missing after load")
+        enc_device = next(pipe.image_encoder.parameters()).device
+        # CFG is always on for our SDXL path (guidance_scale > 1).
+        embeds = pipe.prepare_ip_adapter_image_embeds(
+            ip_image,
+            None,
+            enc_device,
+            1,
+            True,
+        )
+        # ``DiffusionPipeline.device`` returns the first *alphabetical*
+        # component's device. ``image_encoder`` sorts before ``unet``/``vae``,
+        # so a CPU-resident ViT-H makes encode_prompt send input_ids to CPU
+        # while the restored TEs sit on CUDA. Stash it off the component graph.
+        pipe._studio_ip_image_encoder = pipe.image_encoder
+        pipe.image_encoder = None
+        target = torch.device(device)
+        return [e.to(device=target) for e in embeds]
+
+    def _clear_sdxl_ip_adapter(self, pipe: Any) -> None:
+        if self._ip_adapter_key is None:
+            return
+        # Restore stashed encoder so unload_ip_adapter can tear it down.
+        if getattr(pipe, "image_encoder", None) is None and getattr(
+            pipe, "_studio_ip_image_encoder", None
+        ) is not None:
+            pipe.image_encoder = pipe._studio_ip_image_encoder
+            pipe._studio_ip_image_encoder = None
+        try:
+            pipe.unload_ip_adapter()
+        except Exception:
+            pass
+        pipe._studio_ip_image_encoder = None
+        self._ip_adapter_key = None
 
     def _load_flux_pipeline(
         self,
