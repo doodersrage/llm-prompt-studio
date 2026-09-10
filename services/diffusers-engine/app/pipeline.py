@@ -3945,12 +3945,14 @@ class PipelineHolder:
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
         controlnet_stack: list[dict[str, Any]] | None = None,
+        reference_image_paths: list[str] | None = None,
     ) -> Image.Image:
         """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA).
         Classic Flux ControlNet supports txt2img / img2img / inpaint via
         FluxControlNet*Pipeline (± stacked Multi / same-file Union modes).
-        Flux2-Klein inpaint uses Flux2KleinInpaintPipeline; Klein ControlNet
-        and plain (no-mask) img2img stay unsupported.
+        Flux2-Klein inpaint uses Flux2KleinInpaintPipeline; ReferenceLatent
+        instruction edit passes ``image=`` into Flux2KleinPipeline. Klein
+        ControlNet and plain (no-mask) strength img2img stay unsupported.
         """
         import torch
 
@@ -4083,6 +4085,27 @@ class PipelineHolder:
         use_inpaint = (
             use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
         )
+        ref_paths = [p for p in (reference_image_paths or []) if p]
+        if ref_paths and (use_img2img or use_inpaint or use_controlnet):
+            raise RuntimeError(
+                "Flux2-Klein ReferenceLatent edit cannot combine with "
+                "img2img/inpaint/ControlNet — use EmptyFlux2LatentImage + "
+                "denoise 1, or ComfyUI."
+            )
+        if ref_paths:
+            from app.dropin_loaders import is_flux_klein_unet
+
+            is_klein = (
+                klein_distilled
+                or is_flux_klein_unet(Path(unet_path).name)
+                or (clip_type or "").lower() == "flux2"
+                or type(pipe).__name__.startswith("Flux2Klein")
+            )
+            if not is_klein:
+                raise RuntimeError(
+                    "ReferenceLatent instruction edit requires Flux2-Klein — "
+                    "use ComfyUI for classic Flux."
+                )
         if use_controlnet:
             if klein_distilled:
                 raise RuntimeError(
@@ -4363,6 +4386,12 @@ class PipelineHolder:
                     (int(width), int(height)), Image.Resampling.LANCZOS
                 )
 
+        reference_images: list[Image.Image] | None = None
+        if ref_paths:
+            reference_images = [
+                Image.open(path).convert("RGB") for path in ref_paths
+            ]
+
         kwargs: dict[str, Any] = {
             "prompt": shaped_prompt,
             "width": int(width),
@@ -4373,6 +4402,10 @@ class PipelineHolder:
         if init_image is not None:
             kwargs["image"] = init_image
             kwargs["strength"] = strength
+        elif reference_images is not None:
+            kwargs["image"] = (
+                reference_images[0] if len(reference_images) == 1 else reference_images
+            )
         if mask_image is not None:
             kwargs["mask_image"] = mask_image
         # guidance_scale / true_cfg differ by pipeline class.
@@ -4391,6 +4424,11 @@ class PipelineHolder:
             if init_image is not None and "image" not in sig.parameters:
                 raise RuntimeError(
                     "Flux img2img requires a pipeline that accepts image+strength."
+                )
+            if reference_images is not None and "image" not in sig.parameters:
+                raise RuntimeError(
+                    "Flux2-Klein ReferenceLatent edit requires Flux2KleinPipeline "
+                    "(image= KV/edit conditioning)."
                 )
             if mask_image is not None and "mask_image" not in sig.parameters:
                 raise RuntimeError(
@@ -4411,12 +4449,18 @@ class PipelineHolder:
         mode_label = (
             "inpaint" if mask_image is not None
             else "img2img" if init_image is not None
+            else "reference-edit" if reference_images is not None
             else "txt2img"
         )
         print(
             f"[diffusers] compiled-flux {mode_label} model={Path(unet_path).name} "
             f"{width}x{height} steps={step_count} cfg={cfg} type={clip_type}"
-            + (f" strength={strength:.2f}" if init_image is not None else ""),
+            + (f" strength={strength:.2f}" if init_image is not None else "")
+            + (
+                f" refs={len(reference_images)}"
+                if reference_images is not None
+                else ""
+            ),
             flush=True,
         )
         try:

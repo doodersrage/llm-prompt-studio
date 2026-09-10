@@ -1459,6 +1459,86 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertFalse(result.supported)
         self.assertIn("Klein", result.reason)
 
+    def test_compiles_flux_klein_reference_latent_edit(self) -> None:
+        # Studio Compose/Refine: EmptyFlux2Latent + ReferenceLatent + denoise 1.
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph["1"]["inputs"]["unet_name"] = "flux2-klein-9b.safetensors"
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "figure1.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["22"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["21", 0]},
+        }
+        graph["6"] = {
+            "class_type": "EmptyFlux2LatentImage",
+            "inputs": {"width": 1024, "height": 1024, "batch_size": 1},
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        graph["8"]["inputs"]["latent_image"] = ["6", 0]
+        graph["8"]["inputs"]["denoise"] = 1.0
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "flux")
+        self.assertEqual(result.compiled.img2img_mode, "txt2img")
+        self.assertEqual(result.compiled.reference_images, ["figure1.png"])
+        self.assertEqual(result.compiled.positive, "flux prompt")
+        self.assertIsNone(result.compiled.init_image)
+
+    def test_compiles_flux_klein_multi_reference_latent(self) -> None:
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "fig1.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["22"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["21", 0]},
+        }
+        graph["23"] = {"class_type": "LoadImage", "inputs": {"image": "fig2.png"}}
+        graph["24"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["23", 0], "vae": ["3", 0]},
+        }
+        graph["25"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["22", 0], "latent": ["24", 0]},
+        }
+        graph["6"] = {
+            "class_type": "EmptyFlux2LatentImage",
+            "inputs": {"width": 768, "height": 1024, "batch_size": 1},
+        }
+        graph["8"]["inputs"]["positive"] = ["25", 0]
+        graph["8"]["inputs"]["latent_image"] = ["6", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.reference_images, ["fig1.png", "fig2.png"])
+        self.assertEqual(result.compiled.width, 768)
+        self.assertEqual(result.compiled.height, 1024)
+
+    def test_flux_classic_reference_latent_unsupported(self) -> None:
+        graph = _flux_graph()
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "figure1.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["22"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["21", 0]},
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("Flux2-Klein", result.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

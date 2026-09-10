@@ -146,6 +146,9 @@ _FLUX_OK = frozenset(
         *_POST_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
+        # Flux2-Klein instruction edit (Compose/Refine scaffold).
+        "EmptyFlux2LatentImage",
+        "ReferenceLatent",
         "KSampler",
         "VAEDecode",
         "SaveImage",
@@ -274,6 +277,9 @@ class CompiledWorkflow:
     # Qwen Image Edit (TextEncodeQwenImageEdit / Plus → LoadImage refs).
     qwen_edit_mode: Literal["none", "edit", "edit_plus"] = "none"
     qwen_edit_images: list[str] = field(default_factory=list)
+    # Flux2-Klein ReferenceLatent → Flux2KleinPipeline(image=…) KV/edit refs.
+    # Distinct from strength img2img (VAEEncode on sampler latent).
+    reference_images: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -466,6 +472,9 @@ def _resolve_conditioning_text(
         return _as_str(node["inputs"].get("text"))
     if ctype in _QWEN_EDIT_OK:
         return _as_str(node["inputs"].get("prompt"))
+    if ctype == "ReferenceLatent":
+        inner_id = _link_id(node["inputs"].get("conditioning"))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
     if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
         inner_id = _link_id(node["inputs"].get(branch))
         return _resolve_conditioning_text(nodes, inner_id, branch)
@@ -473,6 +482,44 @@ def _resolve_conditioning_text(
         inner_id = _link_id(node["inputs"].get(branch))
         return _resolve_conditioning_text(nodes, inner_id, branch)
     return ""
+
+
+def _trace_reference_images(
+    nodes: dict[str, dict[str, Any]], positive_id: str | None
+) -> list[str]:
+    """Walk ReferenceLatent on positive → LoadImage names (CLIP-nearest first).
+
+    Studio Flux2-Klein Compose/Refine wires ``EmptyFlux2LatentImage`` + denoise 1
+    with Figure N attached via ``ReferenceLatent`` on conditioning (not VAEEncode
+    on the sampler latent). Diffusers maps those to ``Flux2KleinPipeline(image=…)``.
+    """
+    collected: list[str] = []
+    seen: set[str] = set()
+    current_id = positive_id
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = nodes.get(current_id, {})
+        ctype = node.get("class_type")
+        if ctype == "ReferenceLatent":
+            latent_id = _link_id(node["inputs"].get("latent"))
+            enc = nodes.get(latent_id or "", {})
+            if enc.get("class_type") == "VAEEncode":
+                name = _resolve_load_image_name(
+                    nodes, _link_id(enc["inputs"].get("pixels"))
+                )
+                if name:
+                    collected.append(name)
+            current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        if ctype == "InpaintModelConditioning":
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        break
+    collected.reverse()
+    return collected
 
 
 def _trace_qwen_edit(
@@ -782,6 +829,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     qwen_edit_mode, qwen_edit_images = (
         _trace_qwen_edit(nodes, pos_id) if family == "qwen" else ("none", [])
     )
+    reference_images = (
+        _trace_reference_images(nodes, pos_id) if family == "flux" else []
+    )
 
     width = _as_int(latent.get("inputs", {}).get("width"), 1024)
     height = _as_int(latent.get("inputs", {}).get("height"), 1024)
@@ -855,7 +905,30 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=(
                 "Flux2-Klein plain img2img has no strength pipeline yet — "
-                "use inpaint with a mask, or ComfyUI."
+                "use inpaint with a mask, ReferenceLatent edit, or ComfyUI."
+            ),
+        )
+
+    has_reference_latent = any(
+        n["class_type"] == "ReferenceLatent" for n in nodes.values()
+    )
+    if has_reference_latent and family == "flux" and not _is_flux_klein(clip_type, unet):
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "ReferenceLatent instruction edit is Flux2-Klein only — "
+                "use ComfyUI for classic Flux."
+            ),
+        )
+    if reference_images and img2img_mode != "txt2img":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Flux2-Klein ReferenceLatent edit cannot combine with "
+                "VAEEncode img2img/inpaint — use EmptyFlux2LatentImage + "
+                "denoise 1, or ComfyUI."
             ),
         )
 
@@ -890,6 +963,15 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             supported=False,
             family=family,
             reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
+        )
+    if reference_images and controlnets:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Flux2-Klein ReferenceLatent edit + ControlNet is not supported "
+                "yet — use edit alone or ComfyUI."
+            ),
         )
     if len(controlnets) > 1 and family not in ("sdxl", "flux", "qwen"):
         return ClassifyResult(
@@ -1057,6 +1139,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         instantid_controlnet=instantid_controlnet,
         qwen_edit_mode=qwen_edit_mode,
         qwen_edit_images=list(qwen_edit_images),
+        reference_images=list(reference_images),
     )
     return ClassifyResult(
         supported=True,

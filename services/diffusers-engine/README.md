@@ -83,7 +83,11 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   re-download when the drop-in is present.
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint is native (`Flux2KleinInpaintPipeline`);
-  Klein plain img2img (no mask) and Klein ControlNet stay unsupported.
+  Klein plain strength img2img (no mask) and Klein ControlNet stay unsupported.
+  Flux2-Klein **ReferenceLatent instruction edit** (Studio Compose/Refine:
+  `EmptyFlux2LatentImage` + `ReferenceLatent` + denoise 1) is native via
+  `Flux2KleinPipeline(image=…)` — multi-ref chains supported; not the same as
+  strength img2img.
 - **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
   `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
   `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Single-image edit ×
