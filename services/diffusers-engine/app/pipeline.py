@@ -1253,6 +1253,137 @@ class PipelineHolder:
             except Exception as exc:
                 print(f"[diffusers] {name} →cpu skipped: {exc}", flush=True)
 
+    def _flux2_klein_preencode_prompt(
+        self,
+        pipe: Any,
+        prompt: str,
+    ) -> Any | None:
+        """Pre-encode Flux2-Klein when TE is parked off ``_execution_device``.
+
+        Diffusers' ``Flux2KleinPipeline.encode_prompt`` always places
+        ``input_ids`` on ``_execution_device`` (CUDA) even after unet-resident /
+        group-offload parked the Qwen3 TE on CPU — which raises a device
+        mismatch. Encode on the TE's real device, then move embeds to CUDA.
+        Prefer a CUDA TE wake when VRAM allows; otherwise encode on CPU and
+        cast embeds to bf16 (CPU bf16 kernels may emit float32).
+        """
+        import torch
+
+        if pipe is None or not type(pipe).__name__.startswith("Flux2Klein"):
+            return None
+        te = getattr(pipe, "text_encoder", None)
+        if te is None or not hasattr(pipe, "encode_prompt"):
+            return None
+        try:
+            te_device = next(te.parameters()).device
+        except StopIteration:
+            return None
+        exec_device = getattr(pipe, "_execution_device", None)
+        if exec_device is None:
+            exec_device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
+        if te_device.type == "cuda" and te_device == exec_device:
+            return None
+
+        transformer = getattr(pipe, "transformer", None)
+        encode_device = te_device
+        woke_te = False
+        dit_parked = False
+        if (
+            te_device.type != "cuda"
+            and torch.cuda.is_available()
+            and exec_device.type == "cuda"
+        ):
+            te_need = self._module_footprint_mb(te)
+            if transformer is not None:
+                self._force_module_cpu(transformer)
+                self._unet_resident = False
+                dit_parked = True
+            self._empty_cuda()
+            free_mb = self._cuda_free_mb()
+            # Qwen3-8B TE (~15GiB bf16) needs several GiB of activation /
+            # hidden-state headroom (encode stacks layers 9/18/27). 1.5GiB was
+            # not enough on a 24GB card — OOM mid-norm after weights loaded.
+            act_headroom = 6000.0
+            if te_need > 0 and free_mb >= te_need + act_headroom:
+                try:
+                    self._bulk_module_to_cuda(te, torch.device("cuda"))
+                    encode_device = torch.device("cuda")
+                    woke_te = True
+                    print(
+                        f"[diffusers] Klein TE encode on CUDA "
+                        f"(TE≈{te_need:.0f}MiB free≈{free_mb:.0f}MiB)",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[diffusers] Klein TE→CUDA failed ({exc}); "
+                        "encoding on CPU",
+                        flush=True,
+                    )
+                    self._force_module_cpu(te)
+                    self._empty_cuda()
+                    encode_device = torch.device("cpu")
+                    woke_te = False
+            else:
+                print(
+                    f"[diffusers] Klein TE encode on CPU "
+                    f"(need≈{te_need:.0f}+{act_headroom:.0f}MiB "
+                    f"free≈{free_mb:.0f}MiB)",
+                    flush=True,
+                )
+
+        try:
+            prompt_embeds, _text_ids = pipe.encode_prompt(
+                prompt=prompt,
+                device=encode_device,
+                num_images_per_prompt=1,
+            )
+        except torch.cuda.OutOfMemoryError:
+            if encode_device.type != "cuda":
+                raise
+            print(
+                "[diffusers] Klein TE CUDA encode OOM; retrying on CPU",
+                flush=True,
+            )
+            self._force_module_cpu(te)
+            self._empty_cuda()
+            woke_te = False
+            prompt_embeds, _text_ids = pipe.encode_prompt(
+                prompt=prompt,
+                device=torch.device("cpu"),
+                num_images_per_prompt=1,
+            )
+        finally:
+            if woke_te:
+                self._force_module_cpu(te)
+                self._empty_cuda()
+
+        # Re-place DiT after we stripped group-offload hooks to make room for TE.
+        if dit_parked and transformer is not None and torch.cuda.is_available():
+            dtype = torch.bfloat16
+            try:
+                first = next(transformer.parameters())
+                if first.is_floating_point():
+                    dtype = first.dtype
+            except StopIteration:
+                pass
+            pipe = self._place_compiled_pipe(
+                pipe,
+                dtype,
+                prefer_offload=True,
+            )
+
+        target_dtype = torch.bfloat16 if exec_device.type == "cuda" else prompt_embeds.dtype
+        try:
+            if prompt_embeds.dtype != target_dtype:
+                prompt_embeds = prompt_embeds.to(dtype=target_dtype)
+            prompt_embeds = prompt_embeds.to(device=exec_device)
+        except Exception:
+            prompt_embeds = prompt_embeds.to(device=exec_device)
+        return prompt_embeds
+
     def _try_unet_resident(self, pipe: Any, *, after_te: bool = False) -> bool:
         """Keep DiT/UNET fully on CUDA (Comfy-style). TE/VAE stay on CPU.
 
@@ -4463,6 +4594,24 @@ class PipelineHolder:
             ),
             flush=True,
         )
+
+        # Flux2-Klein: TE may be parked on CPU while _execution_device is CUDA.
+        klein_embeds = self._flux2_klein_preencode_prompt(run_pipe, shaped_prompt)
+        if klein_embeds is not None:
+            kwargs.pop("prompt", None)
+            kwargs["prompt_embeds"] = klein_embeds
+            # Condition / init encode needs the VAE on the execution device.
+            vae = getattr(run_pipe, "vae", None)
+            if (
+                vae is not None
+                and torch.cuda.is_available()
+                and (reference_images is not None or init_image is not None)
+            ):
+                try:
+                    self._safe_module_to(vae, "cuda")
+                except Exception as exc:
+                    print(f"[diffusers] Klein VAE→CUDA skipped: {exc}", flush=True)
+
         try:
             result = run_pipe(**kwargs)
             return result.images[0]
@@ -4474,6 +4623,12 @@ class PipelineHolder:
                 pass
             raise
         finally:
+            try:
+                vae = getattr(run_pipe, "vae", None)
+                if vae is not None and type(run_pipe).__name__.startswith("Flux2Klein"):
+                    self._safe_module_to(vae, "cpu")
+            except Exception:
+                pass
             self._empty_cuda()
 
     def generate_compiled_qwen(
