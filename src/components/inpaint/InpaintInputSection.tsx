@@ -111,9 +111,10 @@ export default function InpaintInputSection({
             FLUX Inpaint.
           </p>
         ) : null}
-        <FieldLabel>Source image</FieldLabel>
+        <FieldLabel htmlFor="inpaint-source-image">Source image</FieldLabel>
         <div className="flex flex-wrap items-center gap-2">
           <input
+            id="inpaint-source-image"
             type="file"
             accept="image/*"
             onChange={event => onFileChange(event.target.files?.[0] ?? null)}
