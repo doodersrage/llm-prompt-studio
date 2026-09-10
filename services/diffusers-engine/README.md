@@ -90,7 +90,9 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   strength img2img.
 - **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
   `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
-  `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Single-image edit ×
+  `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Studio Compose/Refine
+  `ReferenceLatent` chains (encoder without `image*` slots) also compile to the
+  same edit pipelines. Edit-Plus collects `image1`–`image4`. Single-image edit ×
   inpaint uses `QwenImageEditInpaintPipeline`. Edit encoder with no images still
   compiles as plain txt2img. Edit + ControlNet / Edit-Plus + inpaint / edit +
   VAEEncode img2img stays Comfy.

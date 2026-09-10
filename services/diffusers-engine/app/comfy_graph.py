@@ -172,6 +172,8 @@ _QWEN_OK = frozenset(
         "CLIPTextEncode",
         "EmptyLatentImage",
         "EmptySD3LatentImage",
+        # Studio Compose/Refine: VAEEncode + ReferenceLatent on edit conditioning.
+        "ReferenceLatent",
         "KSampler",
         "VAEDecode",
         "SaveImage",
@@ -529,10 +531,12 @@ def _trace_qwen_edit(
 
     Returns (mode, image filenames). Mode is ``none`` when the positive branch
     is not an edit encoder (or edit encoder with no linked images — T2I).
+
+    Studio Compose/Refine often leaves the edit encoder without ``image*``
+    slots and attaches figures via ``ReferenceLatent`` → VAEEncode → LoadImage
+    instead — those refs map to the same Diffusers edit ``image=`` list.
     """
-    node = nodes.get(positive_id or "", {})
-    ctype = node.get("class_type")
-    # Walk through ControlNet / inpaint wrappers to the encoder.
+    ref_along_path: list[str] = []
     seen: set[str] = set()
     current_id = positive_id
     while current_id and current_id not in seen:
@@ -541,8 +545,25 @@ def _trace_qwen_edit(
         ctype = node.get("class_type")
         if ctype in _QWEN_EDIT_OK:
             break
-        if ctype in ("ControlNetApply", "ControlNetApplyAdvanced", "InpaintModelConditioning"):
-            current_id = _link_id(node["inputs"].get("positive") or node["inputs"].get("conditioning"))
+        if ctype == "ReferenceLatent":
+            latent_id = _link_id(node["inputs"].get("latent"))
+            enc = nodes.get(latent_id or "", {})
+            if enc.get("class_type") == "VAEEncode":
+                name = _resolve_load_image_name(
+                    nodes, _link_id(enc["inputs"].get("pixels"))
+                )
+                if name:
+                    ref_along_path.append(name)
+            current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype in (
+            "ControlNetApply",
+            "ControlNetApplyAdvanced",
+            "InpaintModelConditioning",
+        ):
+            current_id = _link_id(
+                node["inputs"].get("positive") or node["inputs"].get("conditioning")
+            )
             continue
         return "none", []
     else:
@@ -554,14 +575,23 @@ def _trace_qwen_edit(
         name = _resolve_load_image_name(nodes, _link_id(inputs.get("image")))
         if name:
             images.append(name)
-        return ("edit" if images else "none"), images
+    else:
+        # EditPlus: image1–image4 (Studio Compose wires up to four figures).
+        for key in ("image1", "image2", "image3", "image4"):
+            name = _resolve_load_image_name(nodes, _link_id(inputs.get(key)))
+            if name:
+                images.append(name)
 
-    # EditPlus: image1 / image2 / image3
-    for key in ("image1", "image2", "image3"):
-        name = _resolve_load_image_name(nodes, _link_id(inputs.get(key)))
-        if name:
-            images.append(name)
-    return ("edit_plus" if images else "none"), images
+    if not images and ref_along_path:
+        # Outer ReferenceLatent first while walking; reverse → CLIP-nearest first.
+        images = list(reversed(ref_along_path))
+
+    if not images:
+        return "none", []
+
+    if ctype == "TextEncodeQwenImageEditPlus" or len(images) > 1:
+        return "edit_plus", images
+    return "edit", images
 
 
 def _resolve_one_controlnet_apply(
@@ -1005,6 +1035,20 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
                 "edit alone or ComfyUI."
             ),
         )
+    if family == "qwen" and any(
+        n["class_type"] == "ReferenceLatent" for n in nodes.values()
+    ):
+        # Refs on CLIPTextEncode (non-edit) cannot map to Diffusers edit pipes.
+        orphan_refs = _trace_reference_images(nodes, pos_id)
+        if orphan_refs and qwen_edit_mode == "none":
+            return ClassifyResult(
+                supported=False,
+                family=family,
+                reason=(
+                    "Qwen ReferenceLatent requires TextEncodeQwenImageEdit "
+                    "(+Plus) — use an edit encoder or ComfyUI."
+                ),
+            )
     if qwen_edit_mode != "none" and img2img_mode == "img2img":
         return ClassifyResult(
             supported=False,

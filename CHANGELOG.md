@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: Qwen Image Edit Compose via `ReferenceLatent` → VAEEncode → LoadImage (Studio EmptySD3Latent + denoise 1); Edit-Plus now collects `image4`.
 - Diffusers engine: Flux2-Klein `ReferenceLatent` + `EmptyFlux2LatentImage` instruction edit (Studio Compose/Refine) via `Flux2KleinPipeline(image=…)`; multi-ref chains supported. Distinct from strength img2img (still Comfy). Klein ControlNet stays Comfy.
 - Diffusers engine: Qwen Image Edit × inpaint via `QwenImageEditInpaintPipeline` (single-image `TextEncodeQwenImageEdit` + mask); Edit-Plus + inpaint stays Comfy.
 - Diffusers engine: Qwen Image Edit / Edit-Plus via `QwenImageEditPipeline` / `QwenImageEditPlusPipeline` (`TextEncodeQwenImageEdit` + linked LoadImage refs); edit encoder without images stays plain txt2img.

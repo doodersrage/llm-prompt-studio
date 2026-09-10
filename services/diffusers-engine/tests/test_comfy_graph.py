@@ -1095,6 +1095,90 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.qwen_edit_mode, "edit_plus")
         self.assertEqual(result.compiled.qwen_edit_images, ["a.png", "b.png"])
 
+    def test_compiles_qwen_edit_plus_image4(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "four figures",
+                "clip": ["2", 0],
+                "image1": ["20", 0],
+                "image2": ["21", 0],
+                "image3": ["22", 0],
+                "image4": ["23", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "", "clip": ["2", 0]},
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "a.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "b.png"}}
+        graph["22"] = {"class_type": "LoadImage", "inputs": {"image": "c.png"}}
+        graph["23"] = {"class_type": "LoadImage", "inputs": {"image": "d.png"}}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit_plus")
+        self.assertEqual(
+            result.compiled.qwen_edit_images,
+            ["a.png", "b.png", "c.png", "d.png"],
+        )
+
+    def test_compiles_qwen_reference_latent_compose(self) -> None:
+        # Studio Compose: edit encoder without image slots + ReferenceLatent refs.
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "blend the figures", "clip": ["2", 0]},
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "", "clip": ["2", 0]},
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "fig1.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["22"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["21", 0]},
+        }
+        graph["23"] = {"class_type": "LoadImage", "inputs": {"image": "fig2.png"}}
+        graph["24"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["23", 0], "vae": ["3", 0]},
+        }
+        graph["25"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["22", 0], "latent": ["24", 0]},
+        }
+        graph["8"]["inputs"]["positive"] = ["25", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit_plus")
+        self.assertEqual(result.compiled.qwen_edit_images, ["fig1.png", "fig2.png"])
+        self.assertEqual(result.compiled.img2img_mode, "txt2img")
+        self.assertEqual(result.compiled.positive, "blend the figures")
+
+    def test_qwen_reference_latent_without_edit_encoder_unsupported(self) -> None:
+        graph = _qwen_graph()
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "fig1.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["3", 0]},
+        }
+        graph["22"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["21", 0]},
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("ReferenceLatent", result.reason)
+
     def test_qwen_edit_encoder_without_images_is_txt2img(self) -> None:
         # Studio disconnects LoadImages for pure T2I with edit encoder class.
         graph = _qwen_graph()
