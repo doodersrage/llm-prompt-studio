@@ -3231,9 +3231,12 @@ class PipelineHolder:
 
         # Classic FLUX.1
         print(f"[diffusers] Flux.1 load {unet_label}", flush=True)
+        flux1_config = _ENGINE_ROOT / "configs" / "flux1-dev" / "transformer"
         transformer = FluxTransformer2DModel.from_single_file(
             unet_path,
+            config=str(flux1_config),
             torch_dtype=dtype,
+            local_files_only=True,
         )
 
         text_encoder = None
@@ -3465,7 +3468,11 @@ class PipelineHolder:
             tokenizer=tokenizer,
             video_processor=Qwen2VLVideoProcessor(),
         )
-        pipe.processor = processor
+        # from_pipe only sees registered components, not bare attributes.
+        try:
+            pipe.register_modules(processor=processor)
+        except Exception:
+            pipe.processor = processor
         print("[diffusers] Qwen edit processor attached (Qwen2VLProcessor)", flush=True)
         return processor
 
