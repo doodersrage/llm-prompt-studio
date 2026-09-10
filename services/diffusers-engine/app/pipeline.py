@@ -4471,6 +4471,7 @@ class PipelineHolder:
         ``QwenImageControlNetInpaintPipeline`` on inpaint graphs (single CN).
         Image Edit: ``QwenImageEditPipeline`` / ``QwenImageEditPlusPipeline``
         when TextEncodeQwenImageEdit(+Plus) has linked LoadImage refs.
+        Edit × inpaint (single-image): ``QwenImageEditInpaintPipeline``.
         """
         import torch
 
@@ -4668,12 +4669,20 @@ class PipelineHolder:
                 raise RuntimeError(
                     "Qwen Image Edit + ControlNet is not supported — use one path."
                 )
-            if use_img2img:
+            if use_img2img and not use_inpaint:
                 raise RuntimeError(
-                    "Qwen Image Edit cannot combine with VAEEncode img2img/inpaint."
+                    "Qwen Image Edit cannot combine with VAEEncode img2img — "
+                    "use edit refs only, or add a mask for edit-inpaint."
+                )
+            use_plus = (qwen_edit_mode == "edit_plus") or len(edit_paths) > 1
+            if use_inpaint and use_plus:
+                raise RuntimeError(
+                    "Qwen Image Edit-Plus + inpaint is not supported "
+                    "(EditInpaint is single-image) — use ComfyUI."
                 )
             try:
                 from diffusers import (
+                    QwenImageEditInpaintPipeline,
                     QwenImageEditPipeline,
                     QwenImageEditPlusPipeline,
                 )
@@ -4683,14 +4692,31 @@ class PipelineHolder:
                     "upgrade diffusers or use ComfyUI for edit graphs."
                 ) from exc
 
-            use_plus = (qwen_edit_mode == "edit_plus") or len(edit_paths) > 1
-            edit_images = [
-                Image.open(p).convert("RGB").resize(
+            if use_inpaint:
+                canvas = Image.open(
+                    init_image_path or edit_paths[0]
+                ).convert("RGB")
+                canvas = canvas.resize(
                     (gen_width, gen_height), Image.Resampling.LANCZOS
                 )
-                for p in edit_paths
-            ]
-            image_arg: Any = edit_images if use_plus else edit_images[0]
+                mask = Image.open(mask_image_path).convert("L")
+                mask = mask.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                image_arg: Any = canvas
+                edit_pipe = QwenImageEditInpaintPipeline.from_pipe(pipe)
+            else:
+                edit_images = [
+                    Image.open(p).convert("RGB").resize(
+                        (gen_width, gen_height), Image.Resampling.LANCZOS
+                    )
+                    for p in edit_paths
+                ]
+                image_arg = edit_images if use_plus else edit_images[0]
+                if use_plus:
+                    edit_pipe = QwenImageEditPlusPipeline.from_pipe(pipe)
+                else:
+                    edit_pipe = QwenImageEditPipeline.from_pipe(pipe)
 
             _te_before = getattr(pipe, "text_encoder", None)
             print(
@@ -4698,10 +4724,6 @@ class PipelineHolder:
                 f"{next(_te_before.parameters()).dtype if _te_before is not None else None}",
                 flush=True,
             )
-            if use_plus:
-                edit_pipe = QwenImageEditPlusPipeline.from_pipe(pipe)
-            else:
-                edit_pipe = QwenImageEditPipeline.from_pipe(pipe)
             self._restore_pipe_component_dtype(edit_pipe, dtype)
 
             te = getattr(edit_pipe, "text_encoder", None)
@@ -4758,6 +4780,9 @@ class PipelineHolder:
                 "num_inference_steps": step_count,
                 "generator": generator,
             }
+            if use_inpaint:
+                edit_kwargs["mask_image"] = mask
+                edit_kwargs["strength"] = strength
             if prompt_embeds_mask is not None:
                 edit_kwargs["prompt_embeds_mask"] = prompt_embeds_mask
             if negative_prompt_embeds is not None:
@@ -4779,11 +4804,17 @@ class PipelineHolder:
             except Exception:
                 edit_kwargs.setdefault("true_cfg_scale", cfg)
 
-            mode_label = "edit-plus" if use_plus else "edit"
+            if use_inpaint:
+                mode_label = "edit+inpaint"
+            elif use_plus:
+                mode_label = "edit-plus"
+            else:
+                mode_label = "edit"
             print(
                 f"[diffusers] compiled-qwen {mode_label} "
                 f"model={Path(model_path).name} refs={len(edit_paths)} "
-                f"{gen_width}x{gen_height} steps={step_count} cfg={cfg}",
+                f"{gen_width}x{gen_height} steps={step_count} cfg={cfg}"
+                + (f" denoise={strength:.2f}" if use_inpaint else ""),
                 flush=True,
             )
             try:

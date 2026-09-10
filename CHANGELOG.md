@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: Qwen Image Edit × inpaint via `QwenImageEditInpaintPipeline` (single-image `TextEncodeQwenImageEdit` + mask); Edit-Plus + inpaint stays Comfy.
 - Diffusers engine: Qwen Image Edit / Edit-Plus via `QwenImageEditPipeline` / `QwenImageEditPlusPipeline` (`TextEncodeQwenImageEdit` + linked LoadImage refs); edit encoder without images stays plain txt2img.
 - Diffusers engine: Flux2-Klein inpaint via Diffusers `Flux2KleinInpaintPipeline`; classic Flux non-CN img2img/inpaint now correctly `from_pipe`s to `FluxImg2ImgPipeline` / `FluxInpaintPipeline`. Klein plain img2img (no mask) and Klein ControlNet stay Comfy.
 - Diffusers engine: Qwen plain Union/Canny ControlNet × img2img via vendored `QwenImageControlNetImg2ImgPipeline` (Diffusers has no classical CN+img2img class yet); InstantX mask-inpaint CN stays inpaint-only.

@@ -923,13 +923,23 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
                 "edit alone or ComfyUI."
             ),
         )
-    if qwen_edit_mode != "none" and img2img_mode != "txt2img":
+    if qwen_edit_mode != "none" and img2img_mode == "img2img":
         return ClassifyResult(
             supported=False,
             family=family,
             reason=(
-                "Qwen Image Edit cannot combine with VAEEncode img2img/inpaint — "
-                "wire refs on TextEncodeQwenImageEdit(+Plus) only, or use ComfyUI."
+                "Qwen Image Edit cannot combine with VAEEncode img2img — "
+                "use edit refs only, add a mask for edit-inpaint, or ComfyUI."
+            ),
+        )
+    if qwen_edit_mode == "edit_plus" and img2img_mode == "inpaint":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Qwen Image Edit-Plus + inpaint is not supported yet "
+                "(EditInpaint is single-image) — use TextEncodeQwenImageEdit "
+                "with one ref, or ComfyUI."
             ),
         )
 

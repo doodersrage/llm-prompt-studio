@@ -956,6 +956,89 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.img2img_mode, "inpaint")
         self.assertIsNotNone(result.compiled.controlnet)
 
+    def test_compiles_qwen_image_edit_inpaint(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEdit",
+            "inputs": {
+                "prompt": "fix the sky",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image": ["20", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEdit",
+            "inputs": {
+                "prompt": "",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image": ["20", 0],
+            },
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "canvas.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["22"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "vae": ["3", 0],
+                "pixels": ["20", 0],
+                "mask": ["21", 0],
+                "noise_mask": True,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        graph["8"]["inputs"]["negative"] = ["22", 1]
+        graph["8"]["inputs"]["latent_image"] = ["22", 2]
+        graph["8"]["inputs"]["denoise"] = 0.7
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit")
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
+        self.assertEqual(result.compiled.positive, "fix the sky")
+
+    def test_qwen_edit_plus_inpaint_unsupported(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "edit",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image1": ["20", 0],
+                "image2": ["21", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "", "clip": ["2", 0], "vae": ["3", 0]},
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "a.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "b.png"}}
+        graph["22"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["23"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "vae": ["3", 0],
+                "pixels": ["20", 0],
+                "mask": ["22", 0],
+                "noise_mask": True,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["23", 0]
+        graph["8"]["inputs"]["negative"] = ["23", 1]
+        graph["8"]["inputs"]["latent_image"] = ["23", 2]
+        graph["8"]["inputs"]["denoise"] = 0.7
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("Edit-Plus", result.reason)
+
     def test_compiles_qwen_image_edit(self) -> None:
         graph = _qwen_graph()
         graph["4"] = {
