@@ -44,6 +44,24 @@ def _resolve_input_image(name: str | None) -> str:
     raise FileNotFoundError(f"Input image not found: {name}")
 
 
+def _apply_output_post(compiled: CompiledWorkflow, image: Image.Image) -> Image.Image:
+    """Neural upscale (Spandrel) then Lanczos ImageScaleBy / ImageBlur polish."""
+    from app.postprocess import apply_output_post
+
+    out = image
+    if compiled.upscale_model:
+        from app.neural_upscale import neural_upscale
+
+        model_path = _resolve_required(compiled.upscale_model, "upscale_models")
+        out = neural_upscale(out, model_path)
+    return apply_output_post(
+        out,
+        scale=compiled.output_scale if compiled.output_scale > 1.001 else None,
+        method="lanczos",
+        moire_blur_sigma=compiled.output_blur_radius,
+    )
+
+
 def execute_compiled(
     compiled: CompiledWorkflow,
     *,
@@ -51,7 +69,7 @@ def execute_compiled(
 ) -> Image.Image:
     if MOCK_MODE:
         image = Image.new("RGB", (compiled.width, compiled.height), (32, 36, 48))
-        return image
+        return _apply_output_post(compiled, image)
 
     init_image_path = (
         _resolve_input_image(compiled.init_image) if compiled.init_image else None
@@ -76,7 +94,7 @@ def execute_compiled(
             if compiled.controlnet_image
             else None
         )
-        return pipeline_holder.generate_compiled_sdxl(
+        image = pipeline_holder.generate_compiled_sdxl(
             checkpoint_path=ckpt,
             vae_name=compiled.vae,
             loras=loras,
@@ -97,6 +115,7 @@ def execute_compiled(
             controlnet_preprocessor=compiled.controlnet_preprocessor,
             controlnet_strength=compiled.controlnet_strength,
         )
+        return _apply_output_post(compiled, image)
 
     if compiled.family == "flux":
         unet = _resolve_required(compiled.unet, "diffusion_models", "checkpoints")
@@ -110,7 +129,7 @@ def execute_compiled(
             if compiled.controlnet_image
             else None
         )
-        return pipeline_holder.generate_compiled_flux(
+        image = pipeline_holder.generate_compiled_flux(
             unet_path=unet,
             clip_name=compiled.clip,
             clip2_name=compiled.clip2,
@@ -139,6 +158,7 @@ def execute_compiled(
             controlnet_preprocessor=compiled.controlnet_preprocessor,
             controlnet_strength=compiled.controlnet_strength,
         )
+        return _apply_output_post(compiled, image)
 
     if compiled.family == "qwen":
         model_path = None
@@ -158,7 +178,7 @@ def execute_compiled(
             if compiled.controlnet_image
             else None
         )
-        return pipeline_holder.generate_compiled_qwen(
+        image = pipeline_holder.generate_compiled_qwen(
             model_path=model_path,
             clip_name=compiled.clip,
             vae_name=compiled.vae,
@@ -190,6 +210,7 @@ def execute_compiled(
             controlnet_preprocessor=compiled.controlnet_preprocessor,
             controlnet_strength=compiled.controlnet_strength,
         )
+        return _apply_output_post(compiled, image)
 
     raise RuntimeError(f"Unsupported compiled family: {compiled.family}")
 
@@ -216,4 +237,7 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "controlnet_image": compiled.controlnet_image,
         "controlnet_preprocessor": compiled.controlnet_preprocessor,
         "controlnet_strength": compiled.controlnet_strength,
+        "upscale_model": compiled.upscale_model,
+        "output_scale": compiled.output_scale,
+        "output_blur_radius": compiled.output_blur_radius,
     }

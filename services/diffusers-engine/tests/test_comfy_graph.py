@@ -466,6 +466,27 @@ class ComfyGraphTests(unittest.TestCase):
         graph[ksampler_id]["inputs"]["negative"] = ["33", 1]
         return graph
 
+    def test_compiles_sdxl_with_upscale_and_scale_by(self) -> None:
+        graph = _sdxl_graph()
+        graph["40"] = {
+            "class_type": "UpscaleModelLoader",
+            "inputs": {"model_name": "4x-UltraSharp.pth"},
+        }
+        graph["41"] = {
+            "class_type": "ImageUpscaleWithModel",
+            "inputs": {"upscale_model": ["40", 0], "image": ["6", 0]},
+        }
+        graph["42"] = {
+            "class_type": "ImageScaleBy",
+            "inputs": {"image": ["41", 0], "scale_by": 1.5, "upscale_method": "lanczos"},
+        }
+        graph["7"]["inputs"]["images"] = ["42", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.upscale_model, "4x-UltraSharp.pth")
+        self.assertAlmostEqual(result.compiled.output_scale, 1.5)
+
     def test_compiles_sdxl_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(
             _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",

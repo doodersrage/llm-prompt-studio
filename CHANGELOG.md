@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: native Final/Max enrich polish — `UpscaleModelLoader` / `ImageUpscaleWithModel` via Spandrel (Comfy `upscale_models/*.pth`) plus `ImageScaleBy` / `ImageBlur`.
 - Diffusers engine: Flux T5 `t5xxl_*_fp8_scaled` loads locally via `.scale_weight` dequant (no hub TE2 re-download); ControlNet pose (`DWPreprocessor` / OpenPose) and depth (`DepthAnythingV2Preprocessor` / MiDaS) compile natively with `controlnet-aux`; Union `control_mode` maps openpose→0 / depth→1 / canny→3.
 - Diffusers engine: load Comfy `qwen_2.5_vl_7b_fp8_scaled.safetensors` by dequantizing per-layer `.scale_weight` into the pipeline dtype (no hub bf16 re-download when CLIPLoader points at the smaller file).
 - Diffusers engine: native Canny/OpenPose/depth ControlNet for SDXL + classic Flux + Qwen, with safetensors-header sniffing to auto-detect "Union" checkpoints (ControlNetUnionModel + control_mode), reject unsupported XLabs-style Flux ControlNets and DiffSynth-style Qwen ControlNet "model patches" up front instead of failing deep in a torch error, and reject the mask-conditioned Qwen ControlNet-Inpainting checkpoint variant (unverified pipeline signature) in favor of the plain Union/Canny one; native inpaint for Flux + Qwen (previously SDXL-only). Flux2-Klein ControlNet/inpaint, IP-Adapter/InstantID/PuLID, FaceDetailer, and video stay on ComfyUI.

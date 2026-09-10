@@ -160,6 +160,14 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         )
         if p is not None
     ]
+    upscale_roots = [
+        p
+        for p in (
+            _comfy_subdir("models", "upscale_models"),
+            _service_dir("upscale_models"),
+        )
+        if p is not None
+    ]
 
     return {
         "checkpoints": _list_bucket(
@@ -177,6 +185,9 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         "loras": _list_bucket("loras", lora_roots, family_fn=_infer_asset_family),
         "controlnets": _list_bucket(
             "controlnets", controlnet_roots, family_fn=lambda n: "other"
+        ),
+        "upscale_models": _list_bucket(
+            "upscale_models", upscale_roots, family_fn=lambda n: "other"
         ),
     }
 

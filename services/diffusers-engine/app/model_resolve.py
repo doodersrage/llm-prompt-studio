@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".bin")
+WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".pth", ".bin")
 
 # Models that AutoPipeline can typically load from a single Comfy checkpoint.
 _DIFFUSERS_FRIENDLY_NEEDLES = ("sdxl", "sd15", "sd1.5", "dreamshaper", "stable-diffusion")

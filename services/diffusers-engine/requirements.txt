@@ -13,5 +13,6 @@ compel>=2.0.0
 torchvision>=0.17.0
 opencv-python-headless>=4.9.0  # ControlNet Canny preprocessing
 controlnet-aux>=0.0.9  # ControlNet OpenPose / depth (MiDaS) preprocessing
+spandrel>=0.4.0  # Comfy UpscaleModelLoader / ImageUpscaleWithModel parity
 
 

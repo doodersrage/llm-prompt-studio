@@ -39,6 +39,18 @@ _CONTROLNET_OK = frozenset(
     }
 )
 
+# Post-decode polish nodes (Final/Max enrich). Executed after sampling.
+_POST_OK = frozenset(
+    {
+        "ImageScaleBy",
+        "ImageBlur",
+        "UpscaleModelLoader",
+        "UpscaleModel",
+        "ImageUpscaleWithModel",
+        "PreviewImage",
+    }
+)
+
 _SDXL_OK = frozenset(
     {
         "CheckpointLoaderSimple",
@@ -48,6 +60,7 @@ _SDXL_OK = frozenset(
         *_IMG2IMG_OK,
         *_INPAINT_OK,
         *_CONTROLNET_OK,
+        *_POST_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -67,6 +80,7 @@ _FLUX_OK = frozenset(
         *_IMG2IMG_OK,
         *_INPAINT_OK,
         *_CONTROLNET_OK,
+        *_POST_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -87,6 +101,7 @@ _QWEN_OK = frozenset(
         *_IMG2IMG_OK,
         *_INPAINT_OK,
         *_CONTROLNET_OK,
+        *_POST_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "EmptySD3LatentImage",
@@ -151,6 +166,12 @@ class CompiledWorkflow:
     controlnet_image: str | None = None
     controlnet_preprocessor: Literal["none", "canny", "openpose", "depth"] = "none"
     controlnet_strength: float = 1.0
+    # Neural ESRGAN / Spandrel model from UpscaleModelLoader (post-decode).
+    upscale_model: str | None = None
+    # Product of ImageScaleBy factors after decode (1.0 = no Lanczos polish).
+    output_scale: float = 1.0
+    # Optional ImageBlur radius applied before output_scale (Comfy soft pass).
+    output_blur_radius: float | None = None
 
 
 @dataclass(frozen=True)
@@ -395,6 +416,39 @@ def _trace_controlnet(
     return controlnet_name, control_image, preprocessor, strength
 
 
+def _trace_output_post(
+    nodes: dict[str, dict[str, Any]],
+) -> tuple[str | None, float, float | None]:
+    """Collect UpscaleModelLoader + ImageScaleBy / ImageBlur polish settings."""
+    upscale_model: str | None = None
+    for node in nodes.values():
+        if node["class_type"] not in ("UpscaleModelLoader", "UpscaleModel"):
+            continue
+        name = _as_str(node["inputs"].get("model_name")).strip()
+        if name and not name.startswith("{{"):
+            upscale_model = name
+            break
+
+    # Only count ImageScaleBy that is actually used by an upscale/save chain.
+    scale = 1.0
+    blur_radius: float | None = None
+    for node in nodes.values():
+        ctype = node["class_type"]
+        if ctype == "ImageScaleBy":
+            factor = _as_float(node["inputs"].get("scale_by"), 1.0)
+            if factor > 1.001:
+                scale *= factor
+        elif ctype == "ImageBlur":
+            blur_radius = _as_float(
+                node["inputs"].get("blur_radius", node["inputs"].get("radius")),
+                0.0,
+            )
+            if blur_radius <= 0.05:
+                blur_radius = None
+
+    return upscale_model, scale, blur_radius
+
+
 def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     nodes = _nodes(graph)
     if not nodes:
@@ -529,8 +583,8 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=(
                 "ControlNet present but could not resolve control_net_name / "
-                "source image (only ControlNetLoader → [CannyEdgePreprocessor] "
-                "→ LoadImage chains are supported)."
+                "source image (ControlNetLoader → optional Canny/DWPose/Depth "
+                "preprocessor → LoadImage chains are supported)."
             ),
         )
     if controlnet_info is not None and family not in ("sdxl", "flux", "qwen"):
@@ -558,6 +612,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     controlnet_name, controlnet_image, controlnet_preprocessor, controlnet_strength = (
         controlnet_info if controlnet_info is not None else (None, None, "none", 1.0)
     )
+    upscale_model, output_scale, output_blur_radius = _trace_output_post(nodes)
 
     compiled = CompiledWorkflow(
         family=family,
@@ -588,6 +643,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         controlnet_image=controlnet_image,
         controlnet_preprocessor=controlnet_preprocessor,
         controlnet_strength=controlnet_strength,
+        upscale_model=upscale_model,
+        output_scale=output_scale,
+        output_blur_radius=output_blur_radius,
     )
     return ClassifyResult(
         supported=True,

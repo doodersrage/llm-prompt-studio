@@ -70,6 +70,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   provider chains for FaceDetailer) need verifying against a real checkpoint/live install —
   not safe to guess blind without a live ComfyUI install + real checkpoints to verify
   against.
+- **Final/Max enrich upscale is native:** `UpscaleModelLoader` / `ImageUpscaleWithModel`
+  run through Spandrel (same `.pth` files as Comfy `models/upscale_models`), then optional
+  `ImageScaleBy` / `ImageBlur` via Pillow — so enrich graphs no longer force a Comfy
+  fallback just for polish.
 - On 24GB cards, Qwen Image 2512 **Lightning quality + speed belong to Comfy** (bf16 + Dynamic VRAM / `comfy-aimdo`). Diffusers either uses fp8+layerwise (faster, more grain/moiré) or full bf16 group-offload (slow / OOM-prone).
 - Do **not** expect Comfy Dynamic VRAM parity here; that requires Comfy’s faulting ops, not mmap alone.
 - Opt-in full bf16: `DIFFUSERS_QWEN_LIGHTNING_BF16=1` (experimental; expect group-offload thrash on 24GB).
