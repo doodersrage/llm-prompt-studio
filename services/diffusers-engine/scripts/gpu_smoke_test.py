@@ -295,6 +295,41 @@ def test_flux_inpaint() -> None:
     _save("flux_inpaint", image)
 
 
+def test_sdxl_controlnet_img2img() -> None:
+    """SDXL ControlNet + img2img (Union) — guided edit path."""
+    from PIL import Image, ImageDraw
+    from app.pipeline import pipeline_holder
+
+    init = Image.new("RGB", (512, 512), (180, 160, 140))
+    ImageDraw.Draw(init).rectangle((80, 80, 432, 432), outline=(40, 40, 40), width=8)
+    init_src = OUT_DIR / "sdxl_cn_img2img_init.png"
+    init.save(init_src)
+    control_src = OUT_DIR / "sdxl_cn_img2img_control.png"
+    _cross_control_image(512).save(control_src)
+
+    image = pipeline_holder.generate_compiled_sdxl(
+        checkpoint_path=_p("checkpoints", "RealVisXL_V5.0_fp16.safetensors"),
+        vae_name=None,
+        loras=[],
+        prompt="a red cube on a wooden table, studio lighting",
+        negative_prompt="blurry, low quality",
+        width=512,
+        height=512,
+        steps=8,
+        guidance_scale=5.5,
+        seed=42,
+        init_image_path=str(init_src),
+        mask_image_path=None,
+        img2img_mode="img2img",
+        denoise=0.55,
+        controlnet_path=_p("controlnet", "controlnet-union-sdxl-1.0.safetensors"),
+        controlnet_image_path=str(control_src),
+        controlnet_preprocessor="canny",
+        controlnet_strength=0.7,
+    )
+    _save("sdxl_controlnet_img2img", image)
+
+
 def test_sdxl_ip_adapter() -> None:
     """SDXL txt2img + IP-Adapter identity lock.
 
@@ -381,6 +416,7 @@ def test_qwen_inpaint() -> None:
 
 TESTS = {
     "sdxl_controlnet_union": test_sdxl_controlnet_union,
+    "sdxl_controlnet_img2img": test_sdxl_controlnet_img2img,
     "sdxl_ip_adapter": test_sdxl_ip_adapter,
     "flux_controlnet_union": test_flux_controlnet_union,
     "flux_controlnet_xlabs_rejected": test_flux_controlnet_xlabs_rejected,

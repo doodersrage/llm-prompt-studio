@@ -2095,9 +2095,10 @@ class PipelineHolder:
         """
         Native SDXL from a Comfy graph — same quality stack as txt2img
         (CLIP fit, hand LoRA, RealVis CFG, fp32 VAE decode).
-        ControlNet (Canny/OpenPose/depth) and IP-Adapter identity lock are
-        mutually exclusive and never combine with img2img/inpaint
-        (comfy_graph.compile_workflow already rejects those combinations).
+
+        Supported combinations:
+        - txt2img ± ControlNet ± IP-Adapter
+        - img2img ± ControlNet (no IP-Adapter, no inpaint+ControlNet yet)
         """
         import torch
         from diffusers import (
@@ -2213,13 +2214,26 @@ class PipelineHolder:
 
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
+        use_controlnet = (
+            controlnet_path is not None and controlnet_image_path is not None
+        )
+        use_ip_adapter = ip_adapter_image_path is not None
+        if use_ip_adapter and use_img2img:
+            raise RuntimeError(
+                "IP-Adapter combined with img2img/inpaint is not supported yet"
+            )
+        if use_controlnet and use_img2img and img2img_mode == "inpaint":
+            raise RuntimeError(
+                "ControlNet combined with inpaint is not supported yet"
+            )
 
-        if use_img2img:
+        if use_img2img and not use_controlnet:
             from diffusers import (
                 StableDiffusionXLImg2ImgPipeline,
                 StableDiffusionXLInpaintPipeline,
             )
 
+            self._clear_sdxl_ip_adapter(pipe)
             init = Image.open(init_image_path).convert("RGB")
             init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
             i2i_kwargs: dict[str, Any] = {
@@ -2271,33 +2285,27 @@ class PipelineHolder:
                 on_step(plan.steps, plan.steps)
             return image
 
-        use_controlnet = (
-            not use_img2img
-            and controlnet_path is not None
-            and controlnet_image_path is not None
-        )
         if use_controlnet:
             from app.safetensors_peek import sdxl_controlnet_is_union
-
-            control_image = Image.open(controlnet_image_path).convert("RGB")
             from app.controlnet_preprocess import (
                 apply_controlnet_preprocess,
                 union_control_mode,
             )
 
+            control_image = Image.open(controlnet_image_path).convert("RGB")
             control_image = apply_controlnet_preprocess(
                 control_image, controlnet_preprocessor
             )
             control_image = control_image.resize(
                 (gen_width, gen_height), Image.Resampling.LANCZOS
             )
+            init = None
+            if use_img2img:
+                init = Image.open(init_image_path).convert("RGB")
+                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
 
-            # xinsir-style "Union" SDXL ControlNets (task_embedding /
-            # control_add_embedding tensors) need ControlNetUnionModel + the
-            # Union pipeline + an explicit control_mode — plain ControlNetModel
-            # silently drops those weights. Sniff the safetensors header (no
-            # torch needed) rather than assuming every .safetensors here is a
-            # plain single-task checkpoint.
+            # xinsir-style "Union" SDXL ControlNets need ControlNetUnionModel +
+            # the Union pipeline + an explicit control_mode.
             is_union = sdxl_controlnet_is_union(controlnet_path)
             cn_key = f"sdxl-{'union' if is_union else 'plain'}:{controlnet_path}"
             if self._controlnet_key != cn_key or self._controlnet_model is None:
@@ -2314,10 +2322,6 @@ class PipelineHolder:
                             controlnet_path, torch_dtype=torch.float16,
                         )
                     except Exception as exc:
-                        # Not every diffusers release has ControlNetUnionModel
-                        # in FromOriginalModelMixin's single-file whitelist —
-                        # fall back to a hub config + local weights (see
-                        # _load_via_hub_config_local_weights docstring).
                         print(
                             f"[diffusers] ControlNetUnionModel.from_single_file "
                             f"failed ({exc}); trying hub config + local weights",
@@ -2336,7 +2340,24 @@ class PipelineHolder:
                         controlnet_path, torch_dtype=torch.float16,
                     )
                 self._controlnet_key = cn_key
-            if is_union:
+
+            if not use_ip_adapter:
+                self._clear_sdxl_ip_adapter(pipe)
+
+            if use_img2img:
+                if is_union:
+                    from diffusers import StableDiffusionXLControlNetUnionImg2ImgPipeline
+
+                    cn_pipe = StableDiffusionXLControlNetUnionImg2ImgPipeline.from_pipe(
+                        pipe, controlnet=self._controlnet_model
+                    )
+                else:
+                    from diffusers import StableDiffusionXLControlNetImg2ImgPipeline
+
+                    cn_pipe = StableDiffusionXLControlNetImg2ImgPipeline.from_pipe(
+                        pipe, controlnet=self._controlnet_model
+                    )
+            elif is_union:
                 from diffusers import StableDiffusionXLControlNetUnionPipeline
 
                 cn_pipe = StableDiffusionXLControlNetUnionPipeline.from_pipe(
@@ -2349,65 +2370,119 @@ class PipelineHolder:
                     pipe, controlnet=self._controlnet_model
                 )
             cn_pipe = self._place_compiled_pipe(cn_pipe, torch.float16)
+
             cn_kwargs: dict[str, Any] = {
                 "controlnet_conditioning_scale": (
                     [float(controlnet_strength)] if is_union else float(controlnet_strength)
                 ),
-                "width": gen_width,
-                "height": gen_height,
                 "num_inference_steps": plan.steps,
                 "guidance_scale": plan.guidance_scale,
                 "generator": generator,
-                "output_type": "latent",
                 "guidance_rescale": 0.7,
             }
-            if is_union:
-                # xinsir's 6-task taxonomy: 0 openpose, 1 depth, 2 soft-edge,
-                # 3 canny/lineart/mlsd, 4 normal, 5 segment.
-                control_mode = union_control_mode(controlnet_preprocessor)
-                cn_kwargs["control_image"] = [control_image]
-                cn_kwargs["control_mode"] = [control_mode]
+            if use_img2img:
+                cn_kwargs["image"] = init
+                cn_kwargs["strength"] = strength
+                cn_kwargs["control_image"] = (
+                    [control_image] if is_union else control_image
+                )
             else:
-                cn_kwargs["image"] = control_image
+                cn_kwargs["width"] = gen_width
+                cn_kwargs["height"] = gen_height
+                cn_kwargs["output_type"] = "latent"
+                if is_union:
+                    cn_kwargs["control_image"] = [control_image]
+                else:
+                    # Plain ControlNet txt2img uses ``image`` for the control map.
+                    cn_kwargs["image"] = control_image
+            if is_union:
+                cn_kwargs["control_mode"] = [
+                    union_control_mode(controlnet_preprocessor)
+                ]
             cn_kwargs.update(encode_kwargs)
+
+            if use_ip_adapter:
+                self._ensure_sdxl_ip_adapter(
+                    cn_pipe,
+                    model_path=ip_adapter_path,
+                    strength=ip_adapter_strength,
+                )
+                ip_image = Image.open(ip_adapter_image_path).convert("RGB")
+                ip_image = ip_image.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                cn_kwargs["ip_adapter_image_embeds"] = self._sdxl_ip_adapter_image_embeds(
+                    cn_pipe, ip_image, device=device_for_gen
+                )
+
+            mode_bits = [
+                "controlnet",
+                controlnet_preprocessor,
+                "union" if is_union else "plain",
+            ]
+            if use_img2img:
+                mode_bits.append("img2img")
+            if use_ip_adapter:
+                mode_bits.append("ip-adapter")
             print(
-                f"[diffusers] compiled-sdxl controlnet({controlnet_preprocessor}"
-                f"{',union' if is_union else ''}) "
+                f"[diffusers] compiled-sdxl {'+'.join(mode_bits)} "
                 f"model={path.name} cn={Path(controlnet_path).name} "
                 f"{gen_width}x{gen_height} steps={plan.steps} "
-                f"cfg={plan.guidance_scale} strength={controlnet_strength:.2f}",
+                f"cfg={plan.guidance_scale} cn_strength={controlnet_strength:.2f}"
+                + (f" denoise={strength:.2f}" if use_img2img else "")
+                + (
+                    f" ip={float(ip_adapter_strength):.2f}"
+                    if use_ip_adapter
+                    else ""
+                ),
                 flush=True,
             )
             try:
                 with _silence_model_warnings():
                     result = cn_pipe(**cn_kwargs)
-                image = self._decode_latents_fp32(cn_pipe, result.images)
+                image = (
+                    result.images[0]
+                    if use_img2img
+                    else self._decode_latents_fp32(cn_pipe, result.images)
+                )
             except torch.cuda.OutOfMemoryError:
                 self._empty_cuda()
-                cn_kwargs["width"] = 768
-                cn_kwargs["height"] = 768
                 small = control_image.resize((768, 768), Image.Resampling.LANCZOS)
-                if is_union:
-                    cn_kwargs["control_image"] = [small]
+                if use_img2img:
+                    cn_kwargs["image"] = init.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                    cn_kwargs["control_image"] = [small] if is_union else small
                 else:
-                    cn_kwargs["image"] = small
+                    cn_kwargs["width"] = 768
+                    cn_kwargs["height"] = 768
+                    if is_union:
+                        cn_kwargs["control_image"] = [small]
+                    else:
+                        cn_kwargs["image"] = small
+                if use_ip_adapter:
+                    ip_small = ip_image.resize((768, 768), Image.Resampling.LANCZOS)
+                    cn_kwargs["ip_adapter_image_embeds"] = (
+                        self._sdxl_ip_adapter_image_embeds(
+                            cn_pipe, ip_small, device=device_for_gen
+                        )
+                    )
                 cn_kwargs["generator"] = torch.Generator(device=device_for_gen).manual_seed(
                     int(seed) & 0xFFFFFFFF
                 )
                 with _silence_model_warnings():
                     result = cn_pipe(**cn_kwargs)
-                image = self._decode_latents_fp32(cn_pipe, result.images)
+                image = (
+                    result.images[0]
+                    if use_img2img
+                    else self._decode_latents_fp32(cn_pipe, result.images)
+                )
             finally:
                 self._empty_cuda()
             if on_step:
                 on_step(plan.steps, plan.steps)
             return image
 
-        use_ip_adapter = (
-            not use_img2img
-            and not use_controlnet
-            and ip_adapter_image_path is not None
-        )
         if use_ip_adapter:
             self._ensure_sdxl_ip_adapter(
                 pipe,
