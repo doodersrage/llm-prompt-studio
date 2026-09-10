@@ -1320,9 +1320,10 @@ html[data-theme='light'] .ui-media-card:hover {
 }
 
 .ui-segmented-item[data-active='true'] {
-  background: var(--accent);
+  /* --accent (#5b7fc4) on white text is ~3.98:1; use --accent-active for WCAG AA 4.5:1 */
+  background: var(--accent-active);
   color: white;
-  box-shadow: 0 4px 12px rgb(91 127 196 / 0.28);
+  box-shadow: 0 4px 12px rgb(74 108 176 / 0.28);
 }
 
 .ui-segmented-item[data-active='true'][data-tone='danger'] {

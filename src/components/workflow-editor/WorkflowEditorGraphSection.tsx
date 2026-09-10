@@ -75,6 +75,7 @@ export default function WorkflowEditorGraphSection({
             className="ui-input min-h-10 min-w-[220px]"
             value={selectedId}
             onChange={event => setSelectedId(event.target.value)}
+            aria-label="Library workflow"
           >
             <option value="">Library workflow…</option>
             {library.map(file => (
