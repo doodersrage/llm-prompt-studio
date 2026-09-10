@@ -3344,13 +3344,32 @@ class PipelineHolder:
     def _load_flux1_clip_tokenizer(self) -> Any:
         from transformers import CLIPTokenizer
 
-        try:
-            return CLIPTokenizer.from_pretrained(
-                "openai/clip-vit-large-patch14",
-                local_files_only=True,
-            )
-        except Exception:
-            return CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+        from app.model_resolve import comfyui_root
+
+        candidates: list[Path] = []
+        root = comfyui_root()
+        if root is not None:
+            candidates.append(root / "comfy" / "sd1_tokenizer")
+        for path in candidates:
+            if (path / "vocab.json").is_file():
+                tok = CLIPTokenizer.from_pretrained(str(path), local_files_only=True)
+                if getattr(tok, "vocab_size", 0) >= 40000:
+                    print(f"[diffusers] Flux CLIP tokenizer from {path}", flush=True)
+                    return tok
+        for local_only in (True, False):
+            try:
+                tok = CLIPTokenizer.from_pretrained(
+                    "openai/clip-vit-large-patch14",
+                    local_files_only=local_only,
+                )
+                if getattr(tok, "vocab_size", 0) >= 40000:
+                    return tok
+            except Exception:
+                continue
+        raise RuntimeError(
+            "Flux CLIP tokenizer not found — place Comfy's comfy/sd1_tokenizer "
+            "or cache openai/clip-vit-large-patch14."
+        )
 
     def _load_flux1_t5_tokenizer(self) -> Any:
         from transformers import T5TokenizerFast
