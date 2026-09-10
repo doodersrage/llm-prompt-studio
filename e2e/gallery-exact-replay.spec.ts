@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { ensureAuthenticated } from './helpers/auth';
 import { ensureStudioWorkspace } from './helpers/gallery';
+import { replaceGalleryIdb } from './helpers/idb';
 import { gotoStable } from './helpers/navigation';
 import { dismissBlockingOverlays } from './helpers/overlays';
 
@@ -23,43 +24,7 @@ const EXACT_REPLAY_FIXTURE = {
 
 async function seedExactReplayEntry(page: import('@playwright/test').Page) {
   await ensureStudioWorkspace(page);
-  await page.addInitScript(entry => {
-    try {
-      localStorage.setItem('comfyui-gallery-v1', JSON.stringify([entry]));
-    } catch {
-      // ignore
-    }
-  }, EXACT_REPLAY_FIXTURE);
-
-  await page.evaluate(async entry => {
-    try {
-      localStorage.setItem('comfyui-gallery-v1', JSON.stringify([entry]));
-    } catch {
-      // ignore
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open('comfy-prompt-studio-v1');
-      request.onerror = () => reject(request.error ?? new Error('idb open failed'));
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains('galleryEntries')) {
-          db.close();
-          resolve();
-          return;
-        }
-        const tx = db.transaction('galleryEntries', 'readwrite');
-        tx.objectStore('galleryEntries').put(entry);
-        tx.oncomplete = () => {
-          db.close();
-          resolve();
-        };
-        tx.onerror = () => reject(tx.error ?? new Error('idb put failed'));
-      };
-    });
-
-    window.dispatchEvent(new Event('comfyui-gallery-updated'));
-  }, EXACT_REPLAY_FIXTURE);
+  await replaceGalleryIdb(page, [EXACT_REPLAY_FIXTURE]);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -123,14 +88,19 @@ test('gallery replay exact graph queues via mocked Comfy API', async ({ page }) 
   await dismissBlockingOverlays(page);
 
   await expect(page.getByRole('heading', { name: /^Gallery$/i, level: 1 })).toBeVisible();
-  await expect(page.getByText(/Exact graph|Graph pruned/i).first()).toBeVisible({
+  // Require the stored-graph badge (not "Graph pruned") so Replay exact is offered.
+  await expect(page.getByText('Exact graph', { exact: true }).first()).toBeVisible({
     timeout: 15_000,
   });
 
   const menu = page.getByTestId('gallery-card-menu').first();
-  await expect(menu).toBeAttached({ timeout: 10_000 });
-  await menu.click({ force: true });
-  const replay = page.getByTestId('gallery-replay-exact');
+  await expect(menu).toBeVisible({ timeout: 10_000 });
+  await menu.click();
+  const menuPanel = page.getByRole('menu');
+  await expect(menuPanel).toBeVisible({ timeout: 10_000 });
+  const replay = menuPanel.getByTestId('gallery-replay-exact');
+  // Queue actions sit below Export/Edit — the fixed menu panel scrolls.
+  await replay.scrollIntoViewIfNeeded();
   await expect(replay).toBeVisible({ timeout: 10_000 });
   await replay.click();
 
