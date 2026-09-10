@@ -37,7 +37,7 @@ test('queue page loads', async ({ page }) => {
 test('settings connection first-run hub loads', async ({ page }) => {
   await gotoStable(page, '/settings?tab=comfyui&section=connection');
   await openComfyUiSettingsTab(page);
-  const connection = page.locator('#settings-comfyui-connection');
+  const connection = page.locator('#settings-comfyui-connection').first();
   await expect(connection).toBeVisible({ timeout: 30_000 });
   await connection.scrollIntoViewIfNeeded();
   // Dynamic ComfyUI tab can finish after the shell — wait for the first-run CTA.
@@ -121,6 +121,9 @@ test('settings comfyui loader maps section loads', async ({ page }) => {
 test('settings workflow health panel loads', async ({ page }) => {
   await gotoStable(page, '/settings?tab=comfyui&section=workflow-library');
   await openComfyUiSettingsTab(page);
+  await expect(page.locator('#settings-comfyui-workflow-library').first()).toBeVisible({
+    timeout: 45_000,
+  });
   await expect(page.getByText(/Workflow library health/i)).toBeVisible({ timeout: 30_000 });
 });
 

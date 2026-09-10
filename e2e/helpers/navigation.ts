@@ -60,29 +60,30 @@ export async function openComfyUiSettingsTab(page: Page): Promise<void> {
     .getByRole('navigation', { name: /Settings sections/i })
     .locator('button.ui-settings-tab')
     .filter({ hasText: /^ComfyUI/ });
-  if (!(await tab.isVisible({ timeout: 5_000 }).catch(() => false))) {
-    // Still wait for the connection hub when deep-linked — tab chrome can lag.
-    await expect(page.locator('#settings-comfyui-connection').first())
-      .toBeVisible({
-        timeout: 30_000,
-      })
-      .catch(() => undefined);
-    return;
+  if (await tab.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    // Clicking an already-active tab rewrites the URL without `section` and can
+    // collapse essentials, hiding Checkpoint map again.
+    if ((await tab.getAttribute('aria-current')) !== 'page') {
+      await tab.click({ force: true }).catch(async () => {
+        await tab.click();
+      });
+      // Tab remount can detach the button mid-click — wait for shell to settle.
+      await expect(page.getByRole('navigation', { name: /Settings sections/i })).toBeVisible({
+        timeout: 15_000,
+      });
+    }
   }
-  // Clicking an already-active tab rewrites the URL without `section` and can
-  // collapse essentials, hiding Checkpoint map again.
-  if ((await tab.getAttribute('aria-current')) !== 'page') {
-    await tab.click({ force: true }).catch(async () => {
-      await tab.click();
-    });
-    // Tab remount can detach the button mid-click — wait for shell to settle.
-    await expect(page.getByRole('navigation', { name: /Settings sections/i })).toBeVisible({
-      timeout: 15_000,
-    });
-  }
-  // Dynamic ComfyUI panel mounts after the shell; connection is always essentials.
-  // Strict mode: React Strict/dev remounts can briefly leave two hubs in the DOM.
-  await expect(page.locator('#settings-comfyui-connection').first()).toBeVisible({
-    timeout: 30_000,
-  });
+  // Connection is essentials; advanced deep-links still mount it, but Strict Mode /
+  // tab remounts can delay any single hub. Accept any ComfyUI panel landmark.
+  const landmark = page
+    .locator(
+      [
+        '#settings-comfyui-connection',
+        '#settings-comfyui-inference-engine',
+        '#settings-comfyui-workflow-library',
+        '#settings-comfyui-workflow-patching',
+      ].join(', ')
+    )
+    .first();
+  await expect(landmark).toBeVisible({ timeout: 45_000 });
 }
