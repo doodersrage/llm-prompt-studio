@@ -586,6 +586,61 @@ class ComfyGraphTests(unittest.TestCase):
         assert result.compiled is not None
         self.assertEqual(result.compiled.controlnet_preprocessor, "depth")
 
+    def test_compiles_sdxl_controlnet_lineart(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "LineArtPreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "lineart")
+
+    def test_compiles_sdxl_controlnet_anime_lineart(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "AnimeLineArtPreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "lineart_anime")
+
+    def test_compiles_sdxl_controlnet_softedge(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "SoftEdgePreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "softedge")
+
+    def test_compiles_sdxl_controlnet_normal(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "BAE-NormalMapPreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "normal")
+
+    def test_compiles_sdxl_controlnet_mlsd(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "M-LSDPreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "mlsd")
+
     def test_compiles_flux_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(
             _flux_graph(), positive_id="4", negative_id="5", ksampler_id="8",

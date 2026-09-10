@@ -14,12 +14,20 @@ class ControlnetPreprocessTests(unittest.TestCase):
     def test_union_control_mode_buckets(self) -> None:
         self.assertEqual(union_control_mode("openpose"), 0)
         self.assertEqual(union_control_mode("depth"), 1)
+        self.assertEqual(union_control_mode("softedge"), 2)
         self.assertEqual(union_control_mode("canny"), 3)
+        self.assertEqual(union_control_mode("lineart"), 3)
+        self.assertEqual(union_control_mode("lineart_anime"), 3)
+        self.assertEqual(union_control_mode("mlsd"), 3)
+        self.assertEqual(union_control_mode("normal"), 4)
         self.assertEqual(union_control_mode("none"), 3)
         self.assertEqual(union_control_mode("unknown"), 3)
 
     def test_flux_union_control_mode_buckets(self) -> None:
         self.assertEqual(flux_union_control_mode("canny"), 0)
+        self.assertEqual(flux_union_control_mode("lineart"), 0)
+        self.assertEqual(flux_union_control_mode("softedge"), 0)
+        self.assertEqual(flux_union_control_mode("normal"), 0)
         self.assertEqual(flux_union_control_mode("depth"), 2)
         self.assertEqual(flux_union_control_mode("openpose"), 4)
         self.assertEqual(flux_union_control_mode("none"), 0)

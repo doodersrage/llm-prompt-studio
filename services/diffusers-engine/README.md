@@ -5,15 +5,18 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 ### Scope / non-goals (parked)
 
 - **Not** for Play film, FaceDetailer, specialty enrich, or Video tool clips — switch to ComfyUI or Fal / Replicate / Grok / Gemini.
-- **ControlNet is Canny + OpenPose + depth for SDXL + classic Flux + Qwen (Union checkpoints).**
-  `ControlNetLoader → [CannyEdgePreprocessor | DWPreprocessor | DepthAnythingV2Preprocessor] → ControlNetApply(Advanced)`
-  compiles natively via `StableDiffusionXLControlNetPipeline` /
+- **ControlNet is Canny + OpenPose + depth + lineart + soft-edge + normal + MLSD
+  for SDXL + classic Flux + Qwen (Union checkpoints).**
+  `ControlNetLoader → [CannyEdgePreprocessor | DWPreprocessor | DepthAnythingV2Preprocessor |
+  LineArtPreprocessor | SoftEdgePreprocessor | BAE-NormalMapPreprocessor | M-LSDPreprocessor | …]
+  → ControlNetApply(Advanced)` compiles natively via `StableDiffusionXLControlNetPipeline` /
   `FluxControlNetPipeline` / `QwenImageControlNetPipeline`. Canny is local
-  opencv; pose/depth use `controlnet-aux` (OpenPose / MiDaS) with on-demand
-  model downloads. Flux2-Klein ControlNet still falls back to ComfyUI — no
-  vetted pipeline for Klein. SDXL and classic Flux ControlNet combine with
-  img2img/inpaint; Qwen plain Union CN is txt2img-only, while the InstantX
-  ControlNet-Inpainting checkpoint runs natively on inpaint graphs.
+  opencv; the rest use `controlnet-aux` (OpenPose / MiDaS / Lineart / HED /
+  NormalBae / MLSD) with on-demand model downloads. Flux2-Klein ControlNet
+  still falls back to ComfyUI — no vetted pipeline for Klein. SDXL and classic
+  Flux ControlNet combine with img2img/inpaint; Qwen plain Union CN is
+  txt2img-only, while the InstantX ControlNet-Inpainting checkpoint runs
+  natively on inpaint graphs.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra
@@ -21,10 +24,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
     silently drops that routing. `app/safetensors_peek.py` reads the safetensors header
     (no torch needed) to tell these apart and switches to `ControlNetUnionModel` /
     `StableDiffusionXLControlNetUnionPipeline` with `control_mode` set for Canny's task
-    bucket automatically. The exact task-index mapping is only verified for the well-known
-    6-mode xinsir SDXL taxonomy (bucket 3 = canny/lineart/mlsd); a Flux union checkpoint's
-    control_mode defaults to `0` as a best-effort guess — check that checkpoint's model
-    card if results look off.
+    bucket automatically. The exact task-index mapping is verified for the well-known
+    6-mode xinsir SDXL taxonomy (0 openpose / 1 depth / 2 softedge / 3 canny·lineart·mlsd /
+    4 normal); InstantX Flux Union maps canny·lineart·softedge·mlsd·normal→0, depth→2,
+    openpose→4 — check that checkpoint's model card if results look off.
   - **XLabs-style Flux ControlNets are rejected up front**, not attempted and left to fail
     deep in a torch error. Diffusers' `FluxControlNetModel` only loads the diffusers-native
     key layout (`x_embedder`/`transformer_blocks`/`controlnet_blocks`); older XLabs-AI

@@ -22,14 +22,49 @@ _INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning
 # Native ControlNet: SDXL, classic Flux (not Flux2-Klein), and Qwen (plain
 # Union/Canny checkpoints only, not the mask-conditioned Inpainting variant —
 # see safetensors_peek.qwen_controlnet_expects_mask). Canny is opencv-local;
-# pose/depth use controlnet-aux (OpenPose / MiDaS) with on-demand downloads.
+# pose/depth/lineart/softedge/normal/mlsd use controlnet-aux with on-demand
+# downloads. Class names match ComfyUI ControlNet Auxiliary Preprocessors /
+# Studio's controlnet-workflow-patch candidates.
 _CONTROLNET_PREPROCESSOR_OK = frozenset(
     {
         "CannyEdgePreprocessor",
+        "Canny",
         "DWPreprocessor",
+        "OpenposePreprocessor",
         "DepthAnythingV2Preprocessor",
+        "DepthAnythingPreprocessor",
+        "MiDaS-DepthMapPreprocessor",
+        "LineArtPreprocessor",
+        "AnimeLineArtPreprocessor",
+        "SoftEdgePreprocessor",
+        "HEDPreprocessor",
+        "PiDiNetPreprocessor",
+        "BAE-NormalMapPreprocessor",
+        "NormalBaePreprocessor",
+        "M-LSDPreprocessor",
+        "MLSDpreprocessor",
     }
 )
+
+# Map Comfy preprocessor class → compiled controlnet_preprocessor token.
+_PREPROCESSOR_BY_CLASS: dict[str, str] = {
+    "CannyEdgePreprocessor": "canny",
+    "Canny": "canny",
+    "DWPreprocessor": "openpose",
+    "OpenposePreprocessor": "openpose",
+    "DepthAnythingV2Preprocessor": "depth",
+    "DepthAnythingPreprocessor": "depth",
+    "MiDaS-DepthMapPreprocessor": "depth",
+    "LineArtPreprocessor": "lineart",
+    "AnimeLineArtPreprocessor": "lineart_anime",
+    "SoftEdgePreprocessor": "softedge",
+    "HEDPreprocessor": "softedge",
+    "PiDiNetPreprocessor": "softedge",
+    "BAE-NormalMapPreprocessor": "normal",
+    "NormalBaePreprocessor": "normal",
+    "M-LSDPreprocessor": "mlsd",
+    "MLSDpreprocessor": "mlsd",
+}
 _CONTROLNET_OK = frozenset(
     {
         "ControlNetLoader",
@@ -179,7 +214,17 @@ class CompiledWorkflow:
     img2img_mode: Literal["txt2img", "img2img", "inpaint"] = "txt2img"
     controlnet: str | None = None
     controlnet_image: str | None = None
-    controlnet_preprocessor: Literal["none", "canny", "openpose", "depth"] = "none"
+    controlnet_preprocessor: Literal[
+        "none",
+        "canny",
+        "openpose",
+        "depth",
+        "lineart",
+        "lineart_anime",
+        "softedge",
+        "normal",
+        "mlsd",
+    ] = "none"
     controlnet_strength: float = 1.0
     # Neural ESRGAN / Spandrel model from UpscaleModelLoader (post-decode).
     upscale_model: str | None = None
@@ -390,10 +435,28 @@ def _resolve_conditioning_text(
 
 def _trace_controlnet(
     nodes: dict[str, dict[str, Any]],
-) -> tuple[str, str, Literal["none", "canny", "openpose", "depth"], float] | None:
+) -> (
+    tuple[
+        str,
+        str,
+        Literal[
+            "none",
+            "canny",
+            "openpose",
+            "depth",
+            "lineart",
+            "lineart_anime",
+            "softedge",
+            "normal",
+            "mlsd",
+        ],
+        float,
+    ]
+    | None
+):
     """Find a single ControlNetApply(Advanced) node and resolve its
-    control_net checkpoint + source image (through Canny / DWPose / Depth
-    preprocessors when present). Returns None when no ControlNet node exists."""
+    control_net checkpoint + source image (through known preprocessors when
+    present). Returns None when no ControlNet node exists."""
     apply_node = next(
         (
             n
@@ -415,16 +478,21 @@ def _trace_controlnet(
 
     image_id = _link_id(inputs.get("image"))
     image_node = nodes.get(image_id or "", {})
-    preprocessor: Literal["none", "canny", "openpose", "depth"] = "none"
+    preprocessor: Literal[
+        "none",
+        "canny",
+        "openpose",
+        "depth",
+        "lineart",
+        "lineart_anime",
+        "softedge",
+        "normal",
+        "mlsd",
+    ] = "none"
     ctype = image_node.get("class_type")
-    if ctype == "CannyEdgePreprocessor":
-        preprocessor = "canny"
-        image_id = _link_id(image_node["inputs"].get("image"))
-    elif ctype == "DWPreprocessor":
-        preprocessor = "openpose"
-        image_id = _link_id(image_node["inputs"].get("image"))
-    elif ctype == "DepthAnythingV2Preprocessor":
-        preprocessor = "depth"
+    mapped = _PREPROCESSOR_BY_CLASS.get(ctype or "")
+    if mapped is not None:
+        preprocessor = mapped  # pyright: ignore[reportAssignmentType]
         image_id = _link_id(image_node["inputs"].get("image"))
 
     control_image = _resolve_load_image_name(nodes, image_id)
