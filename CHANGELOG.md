@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: classic Flux ControlNet × img2img/inpaint (InstantX Union `control_mode` mapped canny→0 / depth→2 / pose→4); Qwen ControlNet stays txt2img-only (no Img2Img CN; mask-channel Inpaint CN unverified).
 - Diffusers engine: SDXL ControlNet × img2img/inpaint and IP-Adapter × txt2img/img2img/inpaint (± ControlNet) compile natively (plain/Union); Flux/Qwen ControlNet stays txt2img-only.
 - Diffusers engine: native SDXL IP-Adapter identity lock (`IPAdapterModelLoader` / `IPAdapterAdvanced`); FaceID/PuLID Comfy drop-ins fall back to hub Plus weights; InstantID/PuLID/FaceDetailer stay on Comfy.
 - Diffusers engine: native Final/Max enrich polish — `UpscaleModelLoader` / `ImageUpscaleWithModel` via Spandrel (Comfy `upscale_models/*.pth`) plus `ImageScaleBy` / `ImageBlur`.

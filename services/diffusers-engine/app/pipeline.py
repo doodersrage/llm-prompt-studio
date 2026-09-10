@@ -3698,9 +3698,8 @@ class PipelineHolder:
         controlnet_strength: float = 1.0,
     ) -> Image.Image:
         """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA).
-        ControlNet (Canny only, classic Flux only — never Klein) inserts
-        FluxControlNetPipeline ahead of plain txt2img; comfy_graph rejects
-        ControlNet combined with img2img/inpaint before this is ever reached.
+        Classic Flux ControlNet supports txt2img / img2img / inpaint via
+        FluxControlNet*Pipeline; Klein ControlNet stays unsupported.
         """
         import torch
 
@@ -3820,6 +3819,11 @@ class PipelineHolder:
         use_controlnet = (
             controlnet_path is not None and controlnet_image_path is not None
         )
+        strength = max(0.01, min(1.0, float(denoise)))
+        use_img2img = init_image_path is not None and strength < 0.999
+        use_inpaint = (
+            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
+        )
         if use_controlnet:
             if klein_distilled:
                 raise RuntimeError(
@@ -3839,10 +3843,18 @@ class PipelineHolder:
                     "layout (x_embedder/transformer_blocks/controlnet_blocks). "
                     "Use ComfyUI for this checkpoint."
                 )
-            from diffusers import FluxControlNetModel, FluxControlNetPipeline
+            from diffusers import (
+                FluxControlNetImg2ImgPipeline,
+                FluxControlNetInpaintPipeline,
+                FluxControlNetModel,
+                FluxControlNetPipeline,
+            )
 
             control_image = Image.open(controlnet_image_path).convert("RGB")
-            from app.controlnet_preprocess import apply_controlnet_preprocess
+            from app.controlnet_preprocess import (
+                apply_controlnet_preprocess,
+                flux_union_control_mode,
+            )
 
             control_image = apply_controlnet_preprocess(
                 control_image, controlnet_preprocessor
@@ -3850,6 +3862,18 @@ class PipelineHolder:
             control_image = control_image.resize(
                 (int(width), int(height)), Image.Resampling.LANCZOS
             )
+            init_image: Image.Image | None = None
+            mask_image: Image.Image | None = None
+            if use_img2img:
+                init_image = Image.open(init_image_path).convert("RGB")
+                init_image = init_image.resize(
+                    (int(width), int(height)), Image.Resampling.LANCZOS
+                )
+            if use_inpaint:
+                mask_image = Image.open(mask_image_path).convert("L")
+                mask_image = mask_image.resize(
+                    (int(width), int(height)), Image.Resampling.LANCZOS
+                )
 
             cn_key = f"flux:{controlnet_path}"
             if self._controlnet_key != cn_key or self._controlnet_model is None:
@@ -3877,13 +3901,6 @@ class PipelineHolder:
                     except Exception as exc:
                         errors.append(f"from_pretrained: {exc}")
                 if model is None:
-                    # Not every diffusers release has FluxControlNetModel in
-                    # FromOriginalModelMixin's single-file whitelist — fall
-                    # back to a hub config + local weights (see
-                    # _load_via_hub_config_local_weights docstring). This is
-                    # a best-effort repo-id guess by naming convention for
-                    # InstantX-style Union checkpoints; the state_dict shape
-                    # check inside will refuse rather than silently mismatch.
                     mode_count = flux_controlnet_mode_count(controlnet_path)
                     if mode_count is not None:
                         try:
@@ -3902,9 +3919,19 @@ class PipelineHolder:
                     )
                 self._controlnet_model = model
                 self._controlnet_key = cn_key
-            cn_pipe = FluxControlNetPipeline.from_pipe(
-                pipe, controlnet=self._controlnet_model
-            )
+
+            if use_inpaint:
+                cn_pipe = FluxControlNetInpaintPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            elif use_img2img:
+                cn_pipe = FluxControlNetImg2ImgPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            else:
+                cn_pipe = FluxControlNetPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
             cn_pipe = self._place_compiled_pipe(
                 cn_pipe,
                 torch.bfloat16,
@@ -3921,6 +3948,11 @@ class PipelineHolder:
                 "num_inference_steps": step_count,
                 "generator": generator,
             }
+            if init_image is not None:
+                cn_kwargs["image"] = init_image
+                cn_kwargs["strength"] = strength
+            if mask_image is not None:
+                cn_kwargs["mask_image"] = mask_image
             try:
                 import inspect
 
@@ -3935,16 +3967,14 @@ class PipelineHolder:
                     cn_kwargs["negative_prompt"] = shaped_negative
                 mode_count = flux_controlnet_mode_count(controlnet_path)
                 if mode_count is not None and "control_mode" in sig.parameters:
-                    # Union/multi-mode Flux ControlNets (e.g. InstantX-style
-                    # Union-Pro) need an explicit task index; the exact index
-                    # layout varies per release, so this is a best-effort
-                    # default (0), not a verified mapping — check the specific
-                    # checkpoint's model card if results look off.
-                    cn_kwargs["control_mode"] = 0
+                    cn_kwargs["control_mode"] = flux_union_control_mode(
+                        controlnet_preprocessor
+                    )
                     print(
                         f"[diffusers] Flux ControlNet is a {mode_count}-mode "
-                        f"union checkpoint — using control_mode=0 (best-effort "
-                        f"default; verify against the model card)",
+                        f"union checkpoint — using control_mode="
+                        f"{cn_kwargs['control_mode']} "
+                        f"(preprocessor={controlnet_preprocessor})",
                         flush=True,
                     )
             except Exception:
@@ -3954,11 +3984,17 @@ class PipelineHolder:
                 if shaped_negative.strip():
                     cn_kwargs["negative_prompt"] = shaped_negative
 
+            mode_label = (
+                "controlnet+inpaint" if mask_image is not None
+                else "controlnet+img2img" if init_image is not None
+                else f"controlnet({controlnet_preprocessor})"
+            )
             print(
-                f"[diffusers] compiled-flux controlnet({controlnet_preprocessor}) "
+                f"[diffusers] compiled-flux {mode_label} "
                 f"model={Path(unet_path).name} cn={Path(controlnet_path).name} "
                 f"{width}x{height} steps={step_count} cfg={cfg} "
-                f"strength={controlnet_strength:.2f}",
+                f"cn_strength={controlnet_strength:.2f}"
+                + (f" denoise={strength:.2f}" if init_image is not None else ""),
                 flush=True,
             )
             try:
@@ -3973,18 +4009,13 @@ class PipelineHolder:
             finally:
                 self._empty_cuda()
 
-        strength = max(0.01, min(1.0, float(denoise)))
-        use_img2img = init_image_path is not None and strength < 0.999
-        use_inpaint = (
-            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
-        )
         if use_inpaint and klein_distilled:
             raise RuntimeError(
                 "Flux2-Klein inpaint is not supported yet (no mask-capable "
                 "pipeline for Klein) — use ComfyUI for this workflow."
             )
-        init_image: Image.Image | None = None
-        mask_image: Image.Image | None = None
+        init_image = None
+        mask_image = None
         if use_img2img:
             init_image = Image.open(init_image_path).convert("RGB")
             init_image = init_image.resize((int(width), int(height)), Image.Resampling.LANCZOS)

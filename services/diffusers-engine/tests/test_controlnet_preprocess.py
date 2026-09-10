@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from app.controlnet_preprocess import apply_controlnet_preprocess, union_control_mode
+from app.controlnet_preprocess import (
+    apply_controlnet_preprocess,
+    flux_union_control_mode,
+    union_control_mode,
+)
 from PIL import Image
 
 
@@ -13,6 +17,13 @@ class ControlnetPreprocessTests(unittest.TestCase):
         self.assertEqual(union_control_mode("canny"), 3)
         self.assertEqual(union_control_mode("none"), 3)
         self.assertEqual(union_control_mode("unknown"), 3)
+
+    def test_flux_union_control_mode_buckets(self) -> None:
+        self.assertEqual(flux_union_control_mode("canny"), 0)
+        self.assertEqual(flux_union_control_mode("depth"), 2)
+        self.assertEqual(flux_union_control_mode("openpose"), 4)
+        self.assertEqual(flux_union_control_mode("none"), 0)
+        self.assertEqual(flux_union_control_mode("unknown"), 0)
 
     def test_apply_none_passthrough(self) -> None:
         img = Image.new("RGB", (32, 32), color=(12, 34, 56))

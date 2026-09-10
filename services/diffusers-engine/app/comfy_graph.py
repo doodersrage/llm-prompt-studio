@@ -658,9 +658,10 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
         )
     if controlnet_info is not None and img2img_mode != "txt2img":
-        # SDXL has ControlNetImg2Img / Inpaint / Union variants; Flux/Qwen
-        # ControlNet stays txt2img-only for now.
-        if family != "sdxl":
+        # SDXL + classic Flux have ControlNet img2img/inpaint pipelines.
+        # Qwen has no ControlNetImg2Img; its CN-Inpaint API is mask-channel
+        # specific and stays Comfy until verified. Klein CN already rejected.
+        if family not in ("sdxl", "flux"):
             return ClassifyResult(
                 supported=False,
                 family=family,

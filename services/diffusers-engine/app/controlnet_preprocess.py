@@ -22,6 +22,14 @@ UNION_CONTROL_MODE: dict[str, int] = {
     "none": 3,
 }
 
+# InstantX FLUX.1-dev-Controlnet-Union taxonomy (see model card).
+FLUX_UNION_CONTROL_MODE: dict[str, int] = {
+    "canny": 0,
+    "depth": 2,
+    "openpose": 4,
+    "none": 0,
+}
+
 _openpose_detector = None
 _depth_detector = None
 
@@ -29,6 +37,11 @@ _depth_detector = None
 def union_control_mode(preprocessor: str) -> int:
     """Map a preprocessor name to xinsir SDXL Union ``control_mode`` bucket."""
     return UNION_CONTROL_MODE.get(preprocessor, 3)
+
+
+def flux_union_control_mode(preprocessor: str) -> int:
+    """Map a preprocessor name to InstantX Flux Union ``control_mode`` bucket."""
+    return FLUX_UNION_CONTROL_MODE.get(preprocessor, 0)
 
 
 def canny(image: Image.Image, low_threshold: int = 100, high_threshold: int = 200) -> Image.Image:
