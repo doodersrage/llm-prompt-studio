@@ -5296,6 +5296,10 @@ class PipelineHolder:
                 prefer_offload=True,
                 pixel_count=max(1, int(gen_width) * int(gen_height)),
             )
+            # force_module_cpu / group-offload can strip layerwise cast hooks on
+            # fp8 DiT — re-apply so proj_out etc. upcast to bf16 at compute time.
+            if transformer is not None:
+                self._enable_qwen_layerwise_casting(transformer)
             if vae is not None:
                 try:
                     vae.to("cuda", dtype=torch.bfloat16)
