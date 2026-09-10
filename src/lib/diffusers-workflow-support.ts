@@ -32,7 +32,7 @@ export function formatDiffusersClassifyHint(
   return {
     mode: 'fallback',
     label: 'Comfy fallback likely',
-    detail: `${result.reason || 'Workflow not natively supported.'}${nodes}`,
+    detail: `${result.reason || 'Workflow not natively supported.'}${nodes} Queue will use ComfyUI when fallback is enabled.`,
   };
 }
 

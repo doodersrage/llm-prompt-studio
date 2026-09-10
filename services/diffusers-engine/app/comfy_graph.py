@@ -25,7 +25,9 @@ _INPAINT_OK = frozenset(
 # Pre-encode / ref-path resize (Studio Compose: LoadImage → ImageScale → VAEEncode).
 # Passthrough for compile — Diffusers pipelines resize refs themselves; we only
 # need to walk through to the LoadImage filename.
-_IMAGE_SCALE_OK = frozenset({"ImageScale", "ResizeImage"})
+_IMAGE_SCALE_OK = frozenset(
+    {"ImageScale", "ResizeImage", "ImageScaleToTotalPixels"}
+)
 
 # Harmless / text-only wrappers that must not force a Comfy fallback.
 _PASSTHROUGH_OK = frozenset({"Note", "MarkdownNote", "Reroute", "ConditioningZeroOut"})
@@ -477,7 +479,7 @@ def _collect_loras(nodes: dict[str, dict[str, Any]]) -> list[CompiledLora]:
 def _resolve_load_image_name(
     nodes: dict[str, dict[str, Any]], node_id: str | None
 ) -> str | None:
-    """Resolve a LoadImage filename, walking ImageScale / ResizeImage wrappers."""
+    """Resolve a LoadImage filename, walking ImageScale* / ResizeImage wrappers."""
     seen: set[str] = set()
     current_id = node_id
     while current_id and current_id not in seen:

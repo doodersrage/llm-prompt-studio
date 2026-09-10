@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: allow `ImageScaleToTotalPixels` on ref paths (Studio Qwen/Flux enrich megapixel scale before VAEEncode/ReferenceLatent).
 - Diffusers → Comfy queue honesty: tag `comfy-fallback` + reason when Diffusers classify/queue declines, and toast/status use the backend that actually accepted the job (not the preferred Diffusers engine id).
 - Diffusers engine: assemble classic FLUX.1 offline when gated `FLUX.1-dev` hub shell is missing (Comfy T5 + openai CLIP tokenizers); attach `Qwen2VLProcessor` before Qwen Image Edit `from_pipe`.
 - Diffusers engine: fix Flux2-Klein TE device mismatch under unet-resident / group-offload (pre-encode on TE device, pass `prompt_embeds`); wake VAE for ReferenceLatent / inpaint condition encode.
