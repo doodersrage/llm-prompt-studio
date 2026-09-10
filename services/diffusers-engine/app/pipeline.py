@@ -3295,7 +3295,12 @@ class PipelineHolder:
                 raise FileNotFoundError(
                     f"Flux VAE not found in drop-in folders: {vae_name}"
                 )
-            vae = AutoencoderKL.from_single_file(str(vae_path), torch_dtype=dtype)
+            vae = AutoencoderKL.from_single_file(
+                str(vae_path),
+                config=str(_ENGINE_ROOT / "configs" / "flux1-dev" / "vae"),
+                torch_dtype=dtype,
+                local_files_only=True,
+            )
             print(f"[diffusers] Flux VAE {vae_path.name}", flush=True)
 
         # Prefer hub shell when cached; otherwise assemble fully from drop-ins
@@ -3448,7 +3453,11 @@ class PipelineHolder:
         return pipe
 
     def _ensure_qwen_edit_processor(self, pipe: Any) -> Any:
-        """Attach Qwen2VLProcessor required by QwenImageEdit*Pipeline.from_pipe."""
+        """Build Qwen2VLProcessor for QwenImageEdit*Pipeline (pass to from_pipe).
+
+        Do not register onto the base QwenImagePipeline — that component is not
+        part of the txt2img signature and breaks ``from_pipe`` / component checks.
+        """
         from transformers import Qwen2VLProcessor
         from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
             Qwen2VLImageProcessor,
@@ -3458,7 +3467,8 @@ class PipelineHolder:
         )
 
         existing = getattr(pipe, "processor", None)
-        if existing is not None:
+        if existing is not None and type(existing).__name__ == "Qwen2VLProcessor":
+            # Prefer a detached copy path: caller passes to from_pipe kwargs.
             return existing
         tokenizer = getattr(pipe, "tokenizer", None)
         if tokenizer is None:
@@ -3468,12 +3478,7 @@ class PipelineHolder:
             tokenizer=tokenizer,
             video_processor=Qwen2VLVideoProcessor(),
         )
-        # from_pipe only sees registered components, not bare attributes.
-        try:
-            pipe.register_modules(processor=processor)
-        except Exception:
-            pipe.processor = processor
-        print("[diffusers] Qwen edit processor attached (Qwen2VLProcessor)", flush=True)
+        print("[diffusers] Qwen edit processor built (Qwen2VLProcessor)", flush=True)
         return processor
 
     def _qwen_hub_snapshot(self) -> Path | None:
@@ -5053,8 +5058,10 @@ class PipelineHolder:
                     (gen_width, gen_height), Image.Resampling.LANCZOS
                 )
                 image_arg: Any = canvas
-                self._ensure_qwen_edit_processor(pipe)
-                edit_pipe = QwenImageEditInpaintPipeline.from_pipe(pipe)
+                processor = self._ensure_qwen_edit_processor(pipe)
+                edit_pipe = QwenImageEditInpaintPipeline.from_pipe(
+                    pipe, processor=processor
+                )
             else:
                 edit_images = [
                     Image.open(p).convert("RGB").resize(
@@ -5063,11 +5070,15 @@ class PipelineHolder:
                     for p in edit_paths
                 ]
                 image_arg = edit_images if use_plus else edit_images[0]
-                self._ensure_qwen_edit_processor(pipe)
+                processor = self._ensure_qwen_edit_processor(pipe)
                 if use_plus:
-                    edit_pipe = QwenImageEditPlusPipeline.from_pipe(pipe)
+                    edit_pipe = QwenImageEditPlusPipeline.from_pipe(
+                        pipe, processor=processor
+                    )
                 else:
-                    edit_pipe = QwenImageEditPipeline.from_pipe(pipe)
+                    edit_pipe = QwenImageEditPipeline.from_pipe(
+                        pipe, processor=processor
+                    )
 
             _te_before = getattr(pipe, "text_encoder", None)
             print(
