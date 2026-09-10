@@ -1384,6 +1384,105 @@ class PipelineHolder:
             prompt_embeds = prompt_embeds.to(device=exec_device)
         return prompt_embeds
 
+    def _flux1_preencode_prompt(
+        self,
+        pipe: Any,
+        prompt: str,
+    ) -> dict[str, Any] | None:
+        """Pre-encode classic FLUX.1 when CLIP/T5 are parked off CUDA.
+
+        Same device mismatch as Klein: group-offload / unet-resident parks TEs
+        on CPU while Diffusers puts token ids on ``_execution_device``.
+        """
+        import torch
+
+        if pipe is None or type(pipe).__name__ not in (
+            "FluxPipeline",
+            "FluxImg2ImgPipeline",
+            "FluxInpaintPipeline",
+            "FluxControlNetPipeline",
+            "FluxControlNetImg2ImgPipeline",
+            "FluxControlNetInpaintPipeline",
+        ):
+            return None
+        te = getattr(pipe, "text_encoder", None)
+        te2 = getattr(pipe, "text_encoder_2", None)
+        if te is None or te2 is None or not hasattr(pipe, "encode_prompt"):
+            return None
+        try:
+            te_device = next(te.parameters()).device
+            te2_device = next(te2.parameters()).device
+        except StopIteration:
+            return None
+        exec_device = getattr(pipe, "_execution_device", None)
+        if exec_device is None:
+            exec_device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
+        if te_device.type == "cuda" and te2_device.type == "cuda":
+            return None
+
+        transformer = getattr(pipe, "transformer", None)
+        dit_parked = False
+        if transformer is not None and torch.cuda.is_available():
+            self._force_module_cpu(transformer)
+            self._unet_resident = False
+            dit_parked = True
+            self._empty_cuda()
+
+        encode_device = torch.device("cuda") if torch.cuda.is_available() else te_device
+        try:
+            if encode_device.type == "cuda":
+                self._bulk_module_to_cuda(te, encode_device)
+                self._bulk_module_to_cuda(te2, encode_device)
+                print(
+                    f"[diffusers] Flux.1 TE encode on CUDA "
+                    f"(free≈{self._cuda_free_mb():.0f}MiB)",
+                    flush=True,
+                )
+            prompt_embeds, pooled_prompt_embeds, _text_ids = pipe.encode_prompt(
+                prompt=prompt,
+                device=encode_device,
+                num_images_per_prompt=1,
+            )
+        except torch.cuda.OutOfMemoryError:
+            print(
+                "[diffusers] Flux.1 TE CUDA encode OOM; retrying on CPU",
+                flush=True,
+            )
+            self._force_module_cpu(te)
+            self._force_module_cpu(te2)
+            self._empty_cuda()
+            prompt_embeds, pooled_prompt_embeds, _text_ids = pipe.encode_prompt(
+                prompt=prompt,
+                device=torch.device("cpu"),
+                num_images_per_prompt=1,
+            )
+        finally:
+            self._force_module_cpu(te)
+            self._force_module_cpu(te2)
+            self._empty_cuda()
+
+        if dit_parked and transformer is not None and torch.cuda.is_available():
+            dtype = torch.bfloat16
+            try:
+                first = next(transformer.parameters())
+                if first.is_floating_point():
+                    dtype = first.dtype
+            except StopIteration:
+                pass
+            pipe = self._place_compiled_pipe(pipe, dtype, prefer_offload=True)
+
+        target_dtype = torch.bfloat16 if exec_device.type == "cuda" else prompt_embeds.dtype
+        prompt_embeds = prompt_embeds.to(device=exec_device, dtype=target_dtype)
+        pooled_prompt_embeds = pooled_prompt_embeds.to(
+            device=exec_device, dtype=target_dtype
+        )
+        return {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+        }
+
     def _try_unet_resident(self, pipe: Any, *, after_te: bool = False) -> bool:
         """Keep DiT/UNET fully on CUDA (Comfy-style). TE/VAE stay on CPU.
 
@@ -4762,12 +4861,12 @@ class PipelineHolder:
             flush=True,
         )
 
-        # Flux2-Klein: TE may be parked on CPU while _execution_device is CUDA.
+        # Flux2-Klein / Flux.1: TE may be parked on CPU while _execution_device
+        # is CUDA — pre-encode and pass embeds.
         klein_embeds = self._flux2_klein_preencode_prompt(run_pipe, shaped_prompt)
         if klein_embeds is not None:
             kwargs.pop("prompt", None)
             kwargs["prompt_embeds"] = klein_embeds
-            # Condition / init encode needs the VAE on the execution device.
             vae = getattr(run_pipe, "vae", None)
             if (
                 vae is not None
@@ -4775,11 +4874,25 @@ class PipelineHolder:
                 and (reference_images is not None or init_image is not None)
             ):
                 try:
-                    # Match latent/preprocess dtype (bf16); from_pipe may leave
-                    # VAE biases in float32.
                     vae.to(device="cuda", dtype=torch.bfloat16)
                 except Exception as exc:
                     print(f"[diffusers] Klein VAE→CUDA skipped: {exc}", flush=True)
+        else:
+            flux1_embeds = self._flux1_preencode_prompt(run_pipe, shaped_prompt)
+            if flux1_embeds is not None:
+                kwargs.pop("prompt", None)
+                kwargs.pop("negative_prompt", None)
+                kwargs.update(flux1_embeds)
+                vae = getattr(run_pipe, "vae", None)
+                if (
+                    vae is not None
+                    and torch.cuda.is_available()
+                    and (reference_images is not None or init_image is not None)
+                ):
+                    try:
+                        vae.to(device="cuda", dtype=torch.bfloat16)
+                    except Exception as exc:
+                        print(f"[diffusers] Flux VAE→CUDA skipped: {exc}", flush=True)
 
         try:
             result = run_pipe(**kwargs)
@@ -4794,7 +4907,10 @@ class PipelineHolder:
         finally:
             try:
                 vae = getattr(run_pipe, "vae", None)
-                if vae is not None and type(run_pipe).__name__.startswith("Flux2Klein"):
+                name = type(run_pipe).__name__
+                if vae is not None and (
+                    name.startswith("Flux2Klein") or name.startswith("Flux")
+                ):
                     self._safe_module_to(vae, "cpu")
             except Exception:
                 pass
