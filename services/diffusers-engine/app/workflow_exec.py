@@ -151,16 +151,28 @@ def execute_compiled(
 
     if compiled.family == "flux":
         unet = _resolve_required(compiled.unet, "diffusion_models", "checkpoints")
-        controlnet_path = (
-            _resolve_required(compiled.controlnet, "controlnets")
-            if compiled.controlnet
-            else None
-        )
-        controlnet_image_path = (
-            _resolve_input_image(compiled.controlnet_image)
-            if compiled.controlnet_image
-            else None
-        )
+        controlnet_stack: list[dict[str, Any]] = []
+        for item in compiled.controlnets:
+            controlnet_stack.append(
+                {
+                    "path": _resolve_required(item.name, "controlnets"),
+                    "image_path": _resolve_input_image(item.image),
+                    "preprocessor": item.preprocessor,
+                    "strength": item.strength,
+                }
+            )
+        if not controlnet_stack and compiled.controlnet:
+            controlnet_stack.append(
+                {
+                    "path": _resolve_required(compiled.controlnet, "controlnets"),
+                    "image_path": _resolve_input_image(compiled.controlnet_image),
+                    "preprocessor": compiled.controlnet_preprocessor,
+                    "strength": compiled.controlnet_strength,
+                }
+            )
+        primary = controlnet_stack[0] if controlnet_stack else None
+        controlnet_path = primary["path"] if primary else None
+        controlnet_image_path = primary["image_path"] if primary else None
         image = pipeline_holder.generate_compiled_flux(
             unet_path=unet,
             clip_name=compiled.clip,
@@ -187,8 +199,13 @@ def execute_compiled(
             denoise=compiled.denoise,
             controlnet_path=controlnet_path,
             controlnet_image_path=controlnet_image_path,
-            controlnet_preprocessor=compiled.controlnet_preprocessor,
-            controlnet_strength=compiled.controlnet_strength,
+            controlnet_preprocessor=(
+                primary["preprocessor"] if primary else compiled.controlnet_preprocessor
+            ),
+            controlnet_strength=(
+                float(primary["strength"]) if primary else compiled.controlnet_strength
+            ),
+            controlnet_stack=controlnet_stack or None,
         )
         return _apply_output_post(compiled, image)
 

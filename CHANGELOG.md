@@ -9,7 +9,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Diffusers engine: SDXL stacked ControlNetApply chains (Studio multi-ref ControlNet) via `MultiControlNetModel`, or one Union checkpoint with multiple `control_image`/`control_mode` entries; Flux/Qwen multi-CN stays Comfy.
+- Diffusers engine: classic Flux stacked ControlNetApply chains via `FluxMultiControlNetModel` (or one InstantX Union file with multiple `control_mode`s); Qwen multi-CN stays Comfy.
+- Diffusers engine: SDXL stacked ControlNetApply chains (Studio multi-ref ControlNet) via `MultiControlNetModel`, or one Union checkpoint with multiple `control_image`/`control_mode` entries.
 - Diffusers engine: ControlNet preprocessors for lineart / anime lineart / soft-edge (HED) / normal (BAE) / MLSD via `controlnet-aux`, plus Comfy class aliases (`OpenposePreprocessor`, `DepthAnythingPreprocessor`, …); xinsir Union `control_mode` maps softedge→2 / lineart·mlsd→3 / normal→4.
 - Diffusers engine: Qwen InstantX ControlNet-Inpainting (mask-channel) via `QwenImageControlNetInpaintPipeline`; plain Union CN stays txt2img-only (no Img2Img CN).
 - Diffusers engine: classic Flux ControlNet × img2img/inpaint (InstantX Union `control_mode` mapped canny→0 / depth→2 / pose→4); Qwen ControlNet stays txt2img-only (no Img2Img CN; mask-channel Inpaint CN unverified).

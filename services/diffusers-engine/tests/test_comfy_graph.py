@@ -687,7 +687,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.controlnet, "control-depth-sdxl.safetensors")
         self.assertEqual(result.compiled.controlnet_preprocessor, "depth")
 
-    def test_flux_controlnet_stack_unsupported(self) -> None:
+    def test_compiles_flux_controlnet_stack(self) -> None:
         graph = self._controlnet_graph(
             _flux_graph(), positive_id="4", negative_id="5", ksampler_id="8",
         )
@@ -712,8 +712,40 @@ class ComfyGraphTests(unittest.TestCase):
         graph["8"]["inputs"]["positive"] = ["42", 0]
         graph["8"]["inputs"]["negative"] = ["42", 1]
         result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "flux")
+        self.assertEqual(len(result.compiled.controlnets), 2)
+        self.assertEqual(result.compiled.controlnets[0].name, "control-depth-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnets[1].name, "control-canny-sdxl.safetensors")
+
+    def test_qwen_controlnet_stack_unsupported(self) -> None:
+        graph = self._controlnet_graph(
+            _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        graph["40"] = {
+            "class_type": "ControlNetLoader",
+            "inputs": {"control_net_name": "control-depth-sdxl.safetensors"},
+        }
+        graph["41"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "depth-source.png"},
+        }
+        graph["42"] = {
+            "class_type": "ControlNetApply",
+            "inputs": {
+                "positive": ["33", 0],
+                "negative": ["33", 1],
+                "control_net": ["40", 0],
+                "image": ["41", 0],
+                "strength": 0.5,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["42", 0]
+        graph["8"]["inputs"]["negative"] = ["42", 1]
+        result = compile_workflow(graph)
         self.assertFalse(result.supported)
-        self.assertIn("SDXL", result.reason)
+        self.assertIn("Qwen", result.reason)
 
     def test_compiles_flux_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(

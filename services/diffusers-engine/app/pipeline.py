@@ -3746,10 +3746,12 @@ class PipelineHolder:
         controlnet_image_path: str | None = None,
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
+        controlnet_stack: list[dict[str, Any]] | None = None,
     ) -> Image.Image:
         """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA).
         Classic Flux ControlNet supports txt2img / img2img / inpaint via
-        FluxControlNet*Pipeline; Klein ControlNet stays unsupported.
+        FluxControlNet*Pipeline (± stacked Multi / same-file Union modes);
+        Klein ControlNet stays unsupported.
         """
         import torch
 
@@ -3866,9 +3868,17 @@ class PipelineHolder:
 
             callback_on_step_end = _cb
 
-        use_controlnet = (
-            controlnet_path is not None and controlnet_image_path is not None
-        )
+        cn_stack: list[dict[str, Any]] = list(controlnet_stack or [])
+        if not cn_stack and controlnet_path and controlnet_image_path:
+            cn_stack = [
+                {
+                    "path": controlnet_path,
+                    "image_path": controlnet_image_path,
+                    "preprocessor": controlnet_preprocessor,
+                    "strength": controlnet_strength,
+                }
+            ]
+        use_controlnet = bool(cn_stack)
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
         use_inpaint = (
@@ -3884,34 +3894,115 @@ class PipelineHolder:
                 flux_controlnet_mode_count,
                 looks_like_diffusers_flux_controlnet,
             )
-
-            if not looks_like_diffusers_flux_controlnet(controlnet_path):
-                raise RuntimeError(
-                    f"{Path(controlnet_path).name} looks like an XLabs-style Flux "
-                    "ControlNet (double_blocks/img_in/input_hint_block keys) — "
-                    "diffusers' FluxControlNetModel needs the diffusers-native "
-                    "layout (x_embedder/transformer_blocks/controlnet_blocks). "
-                    "Use ComfyUI for this checkpoint."
-                )
+            from app.controlnet_preprocess import (
+                apply_controlnet_preprocess,
+                flux_union_control_mode,
+            )
             from diffusers import (
                 FluxControlNetImg2ImgPipeline,
                 FluxControlNetInpaintPipeline,
                 FluxControlNetModel,
                 FluxControlNetPipeline,
+                FluxMultiControlNetModel,
             )
 
-            control_image = Image.open(controlnet_image_path).convert("RGB")
-            from app.controlnet_preprocess import (
-                apply_controlnet_preprocess,
-                flux_union_control_mode,
-            )
+            for entry in cn_stack:
+                path_str = str(entry["path"])
+                if not looks_like_diffusers_flux_controlnet(path_str):
+                    raise RuntimeError(
+                        f"{Path(path_str).name} looks like an XLabs-style Flux "
+                        "ControlNet (double_blocks/img_in/input_hint_block keys) — "
+                        "diffusers' FluxControlNetModel needs the diffusers-native "
+                        "layout (x_embedder/transformer_blocks/controlnet_blocks). "
+                        "Use ComfyUI for this checkpoint."
+                    )
 
-            control_image = apply_controlnet_preprocess(
-                control_image, controlnet_preprocessor
+            control_images: list[Image.Image] = []
+            strengths: list[float] = []
+            preprocessors: list[str] = []
+            for entry in cn_stack:
+                img = Image.open(entry["image_path"]).convert("RGB")
+                img = apply_controlnet_preprocess(
+                    img, str(entry.get("preprocessor") or "none")
+                )
+                img = img.resize((int(width), int(height)), Image.Resampling.LANCZOS)
+                control_images.append(img)
+                strengths.append(float(entry.get("strength", 1.0)))
+                preprocessors.append(str(entry.get("preprocessor") or "none"))
+
+            mode_counts = [
+                flux_controlnet_mode_count(str(entry["path"])) for entry in cn_stack
+            ]
+            is_union = all(c is not None for c in mode_counts)
+            is_plain = all(c is None for c in mode_counts)
+            if not is_union and not is_plain:
+                raise RuntimeError(
+                    "Mixed Union and single-task Flux ControlNet stack is not "
+                    "supported — use ComfyUI."
+                )
+            if is_union:
+                resolved = {str(Path(e["path"]).resolve()) for e in cn_stack}
+                if len(resolved) > 1:
+                    raise RuntimeError(
+                        "Stacked Flux Union ControlNets must share one checkpoint "
+                        "file — use ComfyUI for different Union weights."
+                    )
+
+            is_multi = len(cn_stack) > 1
+            paths_key = "|".join(str(Path(e["path"]).resolve()) for e in cn_stack)
+            cn_key = (
+                f"flux-{'union' if is_union else 'plain'}:n{len(cn_stack)}:{paths_key}"
             )
-            control_image = control_image.resize(
-                (int(width), int(height)), Image.Resampling.LANCZOS
-            )
+            if self._controlnet_key != cn_key or self._controlnet_model is None:
+                names = "+".join(Path(e["path"]).name for e in cn_stack)
+                print(
+                    f"[diffusers] loading Flux ControlNet stack ({len(cn_stack)}): {names}",
+                    flush=True,
+                )
+
+                def _load_one_flux_cn(path_str: str) -> Any:
+                    cn_source = Path(path_str)
+                    errors: list[str] = []
+                    model = None
+                    if cn_source.is_file():
+                        try:
+                            model = FluxControlNetModel.from_single_file(
+                                str(cn_source), torch_dtype=torch.bfloat16
+                            )
+                        except Exception as exc:
+                            errors.append(f"from_single_file: {exc}")
+                    if model is None:
+                        repo_dir = cn_source.parent if cn_source.is_file() else cn_source
+                        try:
+                            model = FluxControlNetModel.from_pretrained(
+                                str(repo_dir), torch_dtype=torch.bfloat16
+                            )
+                        except Exception as exc:
+                            errors.append(f"from_pretrained: {exc}")
+                    if model is None and flux_controlnet_mode_count(path_str) is not None:
+                        try:
+                            model = _load_via_hub_config_local_weights(
+                                FluxControlNetModel,
+                                "InstantX/FLUX.1-dev-Controlnet-Union",
+                                str(cn_source),
+                                torch.bfloat16,
+                            )
+                        except Exception as exc:
+                            errors.append(f"hub-config+local-weights: {exc}")
+                    if model is None:
+                        raise RuntimeError(
+                            f"Could not load Flux ControlNet from {path_str}: "
+                            + "; ".join(errors)
+                        )
+                    return model
+
+                if is_union or not is_multi:
+                    self._controlnet_model = _load_one_flux_cn(str(cn_stack[0]["path"]))
+                else:
+                    models = [_load_one_flux_cn(str(e["path"])) for e in cn_stack]
+                    self._controlnet_model = FluxMultiControlNetModel(models)
+                self._controlnet_key = cn_key
+
             init_image: Image.Image | None = None
             mask_image: Image.Image | None = None
             if use_img2img:
@@ -3924,51 +4015,6 @@ class PipelineHolder:
                 mask_image = mask_image.resize(
                     (int(width), int(height)), Image.Resampling.LANCZOS
                 )
-
-            cn_key = f"flux:{controlnet_path}"
-            if self._controlnet_key != cn_key or self._controlnet_model is None:
-                print(
-                    f"[diffusers] loading Flux ControlNet "
-                    f"{Path(controlnet_path).name}",
-                    flush=True,
-                )
-                cn_source = Path(controlnet_path)
-                errors: list[str] = []
-                model = None
-                if cn_source.is_file():
-                    try:
-                        model = FluxControlNetModel.from_single_file(
-                            str(cn_source), torch_dtype=torch.bfloat16
-                        )
-                    except Exception as exc:
-                        errors.append(f"from_single_file: {exc}")
-                if model is None:
-                    repo_dir = cn_source.parent if cn_source.is_file() else cn_source
-                    try:
-                        model = FluxControlNetModel.from_pretrained(
-                            str(repo_dir), torch_dtype=torch.bfloat16
-                        )
-                    except Exception as exc:
-                        errors.append(f"from_pretrained: {exc}")
-                if model is None:
-                    mode_count = flux_controlnet_mode_count(controlnet_path)
-                    if mode_count is not None:
-                        try:
-                            model = _load_via_hub_config_local_weights(
-                                FluxControlNetModel,
-                                "InstantX/FLUX.1-dev-Controlnet-Union",
-                                str(cn_source),
-                                torch.bfloat16,
-                            )
-                        except Exception as exc:
-                            errors.append(f"hub-config+local-weights: {exc}")
-                if model is None:
-                    raise RuntimeError(
-                        f"Could not load Flux ControlNet from {controlnet_path}: "
-                        + "; ".join(errors)
-                    )
-                self._controlnet_model = model
-                self._controlnet_key = cn_key
 
             if use_inpaint:
                 cn_pipe = FluxControlNetInpaintPipeline.from_pipe(
@@ -3989,10 +4035,12 @@ class PipelineHolder:
                 pixel_count=max(1, int(width) * int(height)),
             )
 
+            control_maps: Any = control_images if is_multi else control_images[0]
+            scale_arg: float | list[float] = strengths if is_multi else strengths[0]
             cn_kwargs: dict[str, Any] = {
                 "prompt": shaped_prompt,
-                "control_image": control_image,
-                "controlnet_conditioning_scale": float(controlnet_strength),
+                "control_image": control_maps,
+                "controlnet_conditioning_scale": scale_arg,
                 "width": int(width),
                 "height": int(height),
                 "num_inference_steps": step_count,
@@ -4015,16 +4063,13 @@ class PipelineHolder:
                     cn_kwargs["callback_on_step_end"] = callback_on_step_end
                 if shaped_negative.strip() and "negative_prompt" in sig.parameters:
                     cn_kwargs["negative_prompt"] = shaped_negative
-                mode_count = flux_controlnet_mode_count(controlnet_path)
-                if mode_count is not None and "control_mode" in sig.parameters:
-                    cn_kwargs["control_mode"] = flux_union_control_mode(
-                        controlnet_preprocessor
-                    )
+                if is_union and "control_mode" in sig.parameters:
+                    modes = [flux_union_control_mode(p) for p in preprocessors]
+                    cn_kwargs["control_mode"] = modes if is_multi else modes[0]
                     print(
-                        f"[diffusers] Flux ControlNet is a {mode_count}-mode "
-                        f"union checkpoint — using control_mode="
-                        f"{cn_kwargs['control_mode']} "
-                        f"(preprocessor={controlnet_preprocessor})",
+                        f"[diffusers] Flux ControlNet is a union checkpoint — "
+                        f"using control_mode={cn_kwargs['control_mode']} "
+                        f"(preprocessors={preprocessors})",
                         flush=True,
                     )
             except Exception:
@@ -4037,13 +4082,16 @@ class PipelineHolder:
             mode_label = (
                 "controlnet+inpaint" if mask_image is not None
                 else "controlnet+img2img" if init_image is not None
-                else f"controlnet({controlnet_preprocessor})"
+                else f"controlnet({'+'.join(preprocessors)})"
             )
+            if is_multi:
+                mode_label = f"multi-{mode_label}"
+            cn_names = "+".join(Path(e["path"]).name for e in cn_stack)
             print(
                 f"[diffusers] compiled-flux {mode_label} "
-                f"model={Path(unet_path).name} cn={Path(controlnet_path).name} "
+                f"model={Path(unet_path).name} cn={cn_names} "
                 f"{width}x{height} steps={step_count} cfg={cfg} "
-                f"cn_strength={controlnet_strength:.2f}"
+                f"cn_strength={strengths}"
                 + (f" denoise={strength:.2f}" if init_image is not None else ""),
                 flush=True,
             )
