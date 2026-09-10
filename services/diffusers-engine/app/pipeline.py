@@ -5297,9 +5297,28 @@ class PipelineHolder:
                 pixel_count=max(1, int(gen_width) * int(gen_height)),
             )
             # force_module_cpu / group-offload can strip layerwise cast hooks on
-            # fp8 DiT — re-apply so proj_out etc. upcast to bf16 at compute time.
+            # fp8 DiT — re-apply so Linear layers upcast to bf16 at compute time.
             if transformer is not None:
                 self._enable_qwen_layerwise_casting(transformer)
+                # proj_out still occasionally stays bare fp8 after place (smoke:
+                # bf16 activations × float8 weight). Force compute dtype.
+                import torch as _torch
+
+                proj = getattr(transformer, "proj_out", None)
+                if (
+                    proj is not None
+                    and isinstance(proj, _torch.nn.Linear)
+                    and proj.weight.dtype
+                    in (
+                        _torch.float8_e4m3fn,
+                        getattr(_torch, "float8_e5m2", type(None)),
+                    )
+                ):
+                    proj.to(dtype=_torch.bfloat16)
+                    print(
+                        "[diffusers] Qwen Edit proj_out → bf16 (layerwise miss)",
+                        flush=True,
+                    )
             if vae is not None:
                 try:
                     vae.to("cuda", dtype=torch.bfloat16)
