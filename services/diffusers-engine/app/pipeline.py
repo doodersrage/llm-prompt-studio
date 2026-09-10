@@ -4475,9 +4475,14 @@ class PipelineHolder:
                 run_pipe = Flux2KleinInpaintPipeline.from_pipe(pipe)
             else:
                 run_pipe = FluxInpaintPipeline.from_pipe(pipe)
+            inpaint_dtype = (
+                torch.bfloat16 if torch.cuda.is_available() else torch.float32
+            )
+            # from_pipe can silently upcast VAE/TE to float32 (same as Qwen).
+            self._restore_pipe_component_dtype(run_pipe, inpaint_dtype)
             run_pipe = self._place_compiled_pipe(
                 run_pipe,
-                torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                inpaint_dtype,
                 prefer_offload=True,
                 pixel_count=max(1, int(width) * int(height)),
             )
@@ -4608,7 +4613,9 @@ class PipelineHolder:
                 and (reference_images is not None or init_image is not None)
             ):
                 try:
-                    self._safe_module_to(vae, "cuda")
+                    # Match latent/preprocess dtype (bf16); from_pipe may leave
+                    # VAE biases in float32.
+                    vae.to(device="cuda", dtype=torch.bfloat16)
                 except Exception as exc:
                     print(f"[diffusers] Klein VAE→CUDA skipped: {exc}", flush=True)
 
