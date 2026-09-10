@@ -719,7 +719,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.controlnets[0].name, "control-depth-sdxl.safetensors")
         self.assertEqual(result.compiled.controlnets[1].name, "control-canny-sdxl.safetensors")
 
-    def test_qwen_controlnet_stack_unsupported(self) -> None:
+    def test_compiles_qwen_controlnet_stack(self) -> None:
         graph = self._controlnet_graph(
             _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
         )
@@ -744,8 +744,12 @@ class ComfyGraphTests(unittest.TestCase):
         graph["8"]["inputs"]["positive"] = ["42", 0]
         graph["8"]["inputs"]["negative"] = ["42", 1]
         result = compile_workflow(graph)
-        self.assertFalse(result.supported)
-        self.assertIn("Qwen", result.reason)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.family, "qwen")
+        self.assertEqual(len(result.compiled.controlnets), 2)
+        self.assertEqual(result.compiled.controlnets[0].name, "control-depth-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnets[1].name, "control-canny-sdxl.safetensors")
 
     def test_compiles_flux_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(

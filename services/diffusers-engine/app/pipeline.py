@@ -4217,13 +4217,15 @@ class PipelineHolder:
         controlnet_image_path: str | None = None,
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
+        controlnet_stack: list[dict[str, Any]] | None = None,
     ) -> Image.Image:
         """Native Qwen-Image from drop-in weights (+ optional VAE/Lightning LoRA).
 
         ControlNet: plain Union/Canny via ``QwenImageControlNetPipeline``
-        (txt2img). Mask-conditioned InstantX ControlNet-Inpainting via
-        ``QwenImageControlNetInpaintPipeline`` when the graph is inpaint and
-        the checkpoint's ``controlnet_x_embedder`` is wider than ``img_in``.
+        (txt2img, ± ``QwenImageMultiControlNetModel`` stacks). Mask-conditioned
+        InstantX ControlNet-Inpainting via ``QwenImageControlNetInpaintPipeline``
+        when the graph is inpaint and the checkpoint's ``controlnet_x_embedder``
+        is wider than ``img_in`` (single CN only).
         """
         import torch
 
@@ -4399,9 +4401,17 @@ class PipelineHolder:
 
             callback_on_step_end = _cb
 
-        use_controlnet = (
-            controlnet_path is not None and controlnet_image_path is not None
-        )
+        cn_stack: list[dict[str, Any]] = list(controlnet_stack or [])
+        if not cn_stack and controlnet_path and controlnet_image_path:
+            cn_stack = [
+                {
+                    "path": controlnet_path,
+                    "image_path": controlnet_image_path,
+                    "preprocessor": controlnet_preprocessor,
+                    "strength": controlnet_strength,
+                }
+            ]
+        use_controlnet = bool(cn_stack)
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
         use_inpaint = (
@@ -4412,21 +4422,38 @@ class PipelineHolder:
                 looks_like_diffusers_qwen_controlnet,
                 qwen_controlnet_expects_mask,
             )
+            from app.controlnet_preprocess import apply_controlnet_preprocess
 
-            if not looks_like_diffusers_qwen_controlnet(controlnet_path):
+            for entry in cn_stack:
+                path_str = str(entry["path"])
+                if not looks_like_diffusers_qwen_controlnet(path_str):
+                    raise RuntimeError(
+                        f"{Path(path_str).name} doesn't look like a "
+                        "diffusers-native Qwen ControlNet (missing "
+                        "controlnet_x_embedder/transformer_blocks keys — e.g. "
+                        "DiffSynth-Studio 'model patch' style checkpoints use a "
+                        "different forward-hook architecture diffusers can't load "
+                        "via from_single_file). Use ComfyUI for this checkpoint."
+                    )
+
+            mask_flags = [
+                qwen_controlnet_expects_mask(str(entry["path"])) for entry in cn_stack
+            ]
+            if any(mask_flags) and not all(mask_flags):
                 raise RuntimeError(
-                    f"{Path(controlnet_path).name} doesn't look like a "
-                    "diffusers-native Qwen ControlNet (missing "
-                    "controlnet_x_embedder/transformer_blocks keys — e.g. "
-                    "DiffSynth-Studio 'model patch' style checkpoints use a "
-                    "different forward-hook architecture diffusers can't load "
-                    "via from_single_file). Use ComfyUI for this checkpoint."
+                    "Mixed mask-inpaint and plain Qwen ControlNet stack is not "
+                    "supported — use ComfyUI."
                 )
-            expects_mask = qwen_controlnet_expects_mask(controlnet_path)
+            if any(mask_flags) and len(cn_stack) > 1:
+                raise RuntimeError(
+                    "Stacked Qwen ControlNet-Inpainting checkpoints are not "
+                    "supported — use a single InstantX inpaint CN or ComfyUI."
+                )
+            expects_mask = bool(mask_flags) and all(mask_flags)
             if expects_mask and not use_inpaint:
                 raise RuntimeError(
-                    f"{Path(controlnet_path).name} is the mask-conditioned Qwen "
-                    "ControlNet-Inpainting variant — use it with an inpaint "
+                    f"{Path(str(cn_stack[0]['path'])).name} is the mask-conditioned "
+                    "Qwen ControlNet-Inpainting variant — use it with an inpaint "
                     "graph (init + mask), not txt2img/img2img."
                 )
             if use_img2img and not expects_mask:
@@ -4440,6 +4467,7 @@ class PipelineHolder:
                     QwenImageControlNetInpaintPipeline,
                     QwenImageControlNetModel,
                     QwenImageControlNetPipeline,
+                    QwenImageMultiControlNetModel,
                 )
             except ImportError as exc:
                 raise RuntimeError(
@@ -4449,10 +4477,12 @@ class PipelineHolder:
                     "ComfyUI for this workflow."
                 ) from exc
 
-            from app.controlnet_preprocess import apply_controlnet_preprocess
-
+            is_multi = len(cn_stack) > 1
+            control_images: list[Image.Image] = []
+            strengths: list[float] = []
+            preprocessors: list[str] = []
+            control_mask: Image.Image | None = None
             if expects_mask:
-                # InstantX inpaint CN packs init latents + mask channels.
                 control_image = Image.open(init_image_path).convert("RGB")
                 control_mask = Image.open(mask_image_path).convert("L")
                 control_image = control_image.resize(
@@ -4461,62 +4491,85 @@ class PipelineHolder:
                 control_mask = control_mask.resize(
                     (gen_width, gen_height), Image.Resampling.LANCZOS
                 )
+                control_images = [control_image]
+                strengths = [float(cn_stack[0].get("strength", 1.0))]
+                preprocessors = [str(cn_stack[0].get("preprocessor") or "none")]
             else:
-                control_image = Image.open(controlnet_image_path).convert("RGB")
-                control_image = apply_controlnet_preprocess(
-                    control_image, controlnet_preprocessor
-                )
-                control_image = control_image.resize(
-                    (gen_width, gen_height), Image.Resampling.LANCZOS
-                )
-                control_mask = None
+                for entry in cn_stack:
+                    img = Image.open(entry["image_path"]).convert("RGB")
+                    img = apply_controlnet_preprocess(
+                        img, str(entry.get("preprocessor") or "none")
+                    )
+                    img = img.resize(
+                        (gen_width, gen_height), Image.Resampling.LANCZOS
+                    )
+                    control_images.append(img)
+                    strengths.append(float(entry.get("strength", 1.0)))
+                    preprocessors.append(str(entry.get("preprocessor") or "none"))
 
-            cn_key = f"qwen:{controlnet_path}"
+            paths_key = "|".join(str(Path(e["path"]).resolve()) for e in cn_stack)
+            cn_key = (
+                f"qwen-{'mask' if expects_mask else 'plain'}:"
+                f"n{len(cn_stack)}:{paths_key}"
+            )
             if self._controlnet_key != cn_key or self._controlnet_model is None:
+                names = "+".join(Path(e["path"]).name for e in cn_stack)
                 print(
-                    f"[diffusers] loading Qwen ControlNet "
-                    f"{Path(controlnet_path).name}",
+                    f"[diffusers] loading Qwen ControlNet stack ({len(cn_stack)}): {names}",
                     flush=True,
                 )
-                cn_source = Path(controlnet_path)
-                errors: list[str] = []
-                model = None
-                if cn_source.is_file():
-                    try:
-                        model = QwenImageControlNetModel.from_single_file(
-                            str(cn_source), torch_dtype=torch.bfloat16
+
+                def _load_one_qwen_cn(path_str: str, *, mask_variant: bool) -> Any:
+                    cn_source = Path(path_str)
+                    errors: list[str] = []
+                    model = None
+                    if cn_source.is_file():
+                        try:
+                            model = QwenImageControlNetModel.from_single_file(
+                                str(cn_source), torch_dtype=torch.bfloat16
+                            )
+                        except Exception as exc:
+                            errors.append(f"from_single_file: {exc}")
+                    if model is None:
+                        repo_dir = cn_source.parent if cn_source.is_file() else cn_source
+                        try:
+                            model = QwenImageControlNetModel.from_pretrained(
+                                str(repo_dir), torch_dtype=torch.bfloat16
+                            )
+                        except Exception as exc:
+                            errors.append(f"from_pretrained: {exc}")
+                    if model is None:
+                        hub_id = (
+                            "InstantX/Qwen-Image-ControlNet-Inpainting"
+                            if mask_variant
+                            else "InstantX/Qwen-Image-ControlNet-Union"
                         )
-                    except Exception as exc:
-                        errors.append(f"from_single_file: {exc}")
-                if model is None:
-                    repo_dir = cn_source.parent if cn_source.is_file() else cn_source
-                    try:
-                        model = QwenImageControlNetModel.from_pretrained(
-                            str(repo_dir), torch_dtype=torch.bfloat16
+                        try:
+                            model = _load_via_hub_config_local_weights(
+                                QwenImageControlNetModel,
+                                hub_id,
+                                str(cn_source),
+                                torch.bfloat16,
+                            )
+                        except Exception as exc:
+                            errors.append(f"hub-config+local-weights: {exc}")
+                    if model is None:
+                        raise RuntimeError(
+                            f"Could not load Qwen ControlNet from {path_str}: "
+                            + "; ".join(errors)
                         )
-                    except Exception as exc:
-                        errors.append(f"from_pretrained: {exc}")
-                if model is None:
-                    hub_id = (
-                        "InstantX/Qwen-Image-ControlNet-Inpainting"
-                        if expects_mask
-                        else "InstantX/Qwen-Image-ControlNet-Union"
+                    return model
+
+                if is_multi:
+                    models = [
+                        _load_one_qwen_cn(str(e["path"]), mask_variant=False)
+                        for e in cn_stack
+                    ]
+                    self._controlnet_model = QwenImageMultiControlNetModel(models)
+                else:
+                    self._controlnet_model = _load_one_qwen_cn(
+                        str(cn_stack[0]["path"]), mask_variant=expects_mask
                     )
-                    try:
-                        model = _load_via_hub_config_local_weights(
-                            QwenImageControlNetModel,
-                            hub_id,
-                            str(cn_source),
-                            torch.bfloat16,
-                        )
-                    except Exception as exc:
-                        errors.append(f"hub-config+local-weights: {exc}")
-                if model is None:
-                    raise RuntimeError(
-                        f"Could not load Qwen ControlNet from {controlnet_path}: "
-                        + "; ".join(errors)
-                    )
-                self._controlnet_model = model
                 self._controlnet_key = cn_key
             _te_before_cn = getattr(pipe, "text_encoder", None)
             print(
@@ -4543,11 +4596,7 @@ class PipelineHolder:
             # Same VRAM choreography as the main Qwen txt2img/img2img path
             # below: park the DiT fully before loading the 7B text encoder
             # so it actually fits, encode via embeds, park TE back off, then
-            # place the DiT for denoise. Skipping this (a plain prompt=...
-            # call, letting the pipeline's own encode_prompt run with the
-            # DiT still occupying the card from _place_compiled_pipe) caused
-            # a cuda/cpu device-mismatch crash on a card with only a few GB
-            # free — confirmed via GPU smoke test.
+            # place the DiT for denoise.
             te = getattr(cn_pipe, "text_encoder", None)
             transformer = getattr(cn_pipe, "transformer", None)
             vae = getattr(cn_pipe, "vae", None)
@@ -4560,10 +4609,6 @@ class PipelineHolder:
             if transformer is not None:
                 self._force_module_cpu(transformer)
                 self._unet_resident = False
-            # The ControlNet submodule from_pipe() just attached is loaded
-            # fresh each time (no group-offload hooks of its own yet) — park
-            # it too, same as transformer/vae, so it isn't quietly occupying
-            # GPU memory while the 7B text encoder needs the room.
             if controlnet_module is not None:
                 self._force_module_cpu(controlnet_module)
             self._empty_cuda()
@@ -4578,13 +4623,6 @@ class PipelineHolder:
                 flush=True,
             )
 
-            # No fallback to a plain prompt= call here: cn_pipe's own
-            # internal encode_prompt() needs the exact same TE-on-GPU
-            # placement this block already does by hand (confirmed via GPU
-            # smoke test — a bare prompt= call hit the identical cuda/cpu
-            # device-mismatch this block exists to avoid). If the embed
-            # step fails, let it fail loudly instead of quietly retrying a
-            # path that's already proven broken here.
             if te is None or not hasattr(cn_pipe, "encode_prompt"):
                 raise RuntimeError(
                     "Qwen ControlNet pipeline has no text_encoder/"
@@ -4619,10 +4657,12 @@ class PipelineHolder:
                 pixel_count=max(1, int(gen_width) * int(gen_height)),
             )
 
+            control_maps: Any = control_images if is_multi else control_images[0]
+            scale_arg: float | list[float] = strengths if is_multi else strengths[0]
             cn_kwargs: dict[str, Any] = {
                 "prompt_embeds": prompt_embeds,
-                "control_image": control_image,
-                "controlnet_conditioning_scale": float(controlnet_strength),
+                "control_image": control_maps,
+                "controlnet_conditioning_scale": scale_arg,
                 "width": gen_width,
                 "height": gen_height,
                 "num_inference_steps": step_count,
@@ -4657,13 +4697,16 @@ class PipelineHolder:
             mode_label = (
                 "controlnet+inpaint"
                 if expects_mask
-                else f"controlnet({controlnet_preprocessor})"
+                else f"controlnet({'+'.join(preprocessors)})"
             )
+            if is_multi:
+                mode_label = f"multi-{mode_label}"
+            cn_names = "+".join(Path(e["path"]).name for e in cn_stack)
             print(
                 f"[diffusers] compiled-qwen {mode_label} "
-                f"model={Path(model_path).name} cn={Path(controlnet_path).name} "
+                f"model={Path(model_path).name} cn={cn_names} "
                 f"{gen_width}x{gen_height} steps={step_count} cfg={cfg} "
-                f"cn_strength={controlnet_strength:.2f}",
+                f"cn_strength={strengths}",
                 flush=True,
             )
             try:

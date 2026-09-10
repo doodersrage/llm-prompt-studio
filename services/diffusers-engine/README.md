@@ -22,7 +22,8 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   single `ControlNetUnionModel` with list `control_image` / `control_mode`.
   Mixed Union+plain or different Union files fall back to ComfyUI. Classic Flux
   stacks the same way via `FluxMultiControlNetModel` / InstantX Union multi-mode.
-  Qwen multi-ControlNet still uses ComfyUI.
+  Qwen plain Union/Canny stacks via `QwenImageMultiControlNetModel` (txt2img);
+  InstantX mask-inpaint CN remains single-only.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra

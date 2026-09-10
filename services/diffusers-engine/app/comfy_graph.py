@@ -762,13 +762,13 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
         )
-    if len(controlnets) > 1 and family not in ("sdxl", "flux"):
+    if len(controlnets) > 1 and family not in ("sdxl", "flux", "qwen"):
         return ClassifyResult(
             supported=False,
             family=family,
             reason=(
-                "Stacked ControlNetApply chains compile natively for SDXL and "
-                "classic Flux only — use ComfyUI for Qwen multi-ControlNet."
+                "Stacked ControlNetApply chains compile natively for SDXL, "
+                "classic Flux, and Qwen only."
             ),
         )
     if controlnets and img2img_mode != "txt2img":
