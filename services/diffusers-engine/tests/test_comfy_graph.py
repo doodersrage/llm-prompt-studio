@@ -256,6 +256,26 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.unet, "flux1-dev.safetensors")
         self.assertEqual(result.compiled.flux_max_shift, 1.15)
 
+    def test_compiles_flux_guidance_and_empty_sd3(self) -> None:
+        # Studio FLUX.1 / UltraReal: EmptySD3Latent + FluxGuidance + KSampler.cfg=1.
+        graph = _flux_graph()
+        graph["6"] = {
+            "class_type": "EmptySD3LatentImage",
+            "inputs": {"width": 1024, "height": 1024, "batch_size": 1},
+        }
+        graph["11"] = {
+            "class_type": "FluxGuidance",
+            "inputs": {"conditioning": ["4", 0], "guidance": 2.5},
+        }
+        graph["8"]["inputs"]["positive"] = ["11", 0]
+        graph["8"]["inputs"]["cfg"] = 1.0
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.flux_guidance, 2.5)
+        self.assertEqual(result.compiled.cfg, 1.0)
+        self.assertEqual(result.compiled.positive, "flux prompt")
+
     def test_compiles_qwen(self) -> None:
         result = compile_workflow(_qwen_graph())
         self.assertTrue(result.supported)

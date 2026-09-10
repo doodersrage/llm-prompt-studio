@@ -227,7 +227,13 @@ def execute_compiled(
             width=compiled.width,
             height=compiled.height,
             steps=compiled.steps,
-            guidance_scale=compiled.cfg,
+            # FluxGuidance.guidance → Diffusers guidance_scale; KSampler.cfg is
+            # usually 1 on Studio UltraReal / Flux.1 scaffolds.
+            guidance_scale=(
+                compiled.flux_guidance
+                if compiled.flux_guidance is not None
+                else compiled.cfg
+            ),
             seed=compiled.seed,
             max_shift=compiled.flux_max_shift,
             base_shift=compiled.flux_base_shift,
@@ -346,6 +352,7 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "aura_shift": compiled.aura_shift,
         "flux_max_shift": compiled.flux_max_shift,
         "flux_base_shift": compiled.flux_base_shift,
+        "flux_guidance": compiled.flux_guidance,
         "init_image": compiled.init_image,
         "mask_image": compiled.mask_image,
         "img2img_mode": compiled.img2img_mode,

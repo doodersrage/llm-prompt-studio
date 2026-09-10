@@ -146,9 +146,13 @@ _FLUX_OK = frozenset(
         *_POST_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
+        # Studio Flux scaffolds use EmptySD3LatentImage (non-Klein).
+        "EmptySD3LatentImage",
         # Flux2-Klein instruction edit (Compose/Refine scaffold).
         "EmptyFlux2LatentImage",
         "ReferenceLatent",
+        # FLUX.1 guidance-distilled embed (Studio UltraReal / Flux scaffolds).
+        "FluxGuidance",
         "KSampler",
         "VAEDecode",
         "SaveImage",
@@ -250,6 +254,8 @@ class CompiledWorkflow:
     loras: list[CompiledLora] = field(default_factory=list)
     flux_max_shift: float | None = None
     flux_base_shift: float | None = None
+    # FluxGuidance.guidance — Diffusers FluxPipeline.guidance_scale (not KSampler.cfg).
+    flux_guidance: float | None = None
     aura_shift: float | None = None
     init_image: str | None = None
     mask_image: str | None = None
@@ -477,6 +483,9 @@ def _resolve_conditioning_text(
     if ctype == "ReferenceLatent":
         inner_id = _link_id(node["inputs"].get("conditioning"))
         return _resolve_conditioning_text(nodes, inner_id, branch)
+    if ctype == "FluxGuidance":
+        inner_id = _link_id(node["inputs"].get("conditioning"))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
     if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
         inner_id = _link_id(node["inputs"].get(branch))
         return _resolve_conditioning_text(nodes, inner_id, branch)
@@ -484,6 +493,31 @@ def _resolve_conditioning_text(
         inner_id = _link_id(node["inputs"].get(branch))
         return _resolve_conditioning_text(nodes, inner_id, branch)
     return ""
+
+
+def _trace_flux_guidance(
+    nodes: dict[str, dict[str, Any]], positive_id: str | None
+) -> float | None:
+    """First FluxGuidance.guidance on the sampler positive chain."""
+    seen: set[str] = set()
+    current_id = positive_id
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = nodes.get(current_id, {})
+        ctype = node.get("class_type")
+        if ctype == "FluxGuidance":
+            return _as_float(node["inputs"].get("guidance"), 3.5)
+        if ctype == "ReferenceLatent":
+            current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        if ctype == "InpaintModelConditioning":
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        break
+    return None
 
 
 def _trace_reference_images(
@@ -511,6 +545,9 @@ def _trace_reference_images(
                 )
                 if name:
                     collected.append(name)
+            current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype == "FluxGuidance":
             current_id = _link_id(node["inputs"].get("conditioning"))
             continue
         if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
@@ -661,6 +698,9 @@ def _trace_controlnet_stack(
             continue
         if ctype == "InpaintModelConditioning":
             current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        if ctype in ("FluxGuidance", "ReferenceLatent"):
+            current_id = _link_id(node["inputs"].get("conditioning"))
             continue
         break
 
@@ -861,6 +901,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     )
     reference_images = (
         _trace_reference_images(nodes, pos_id) if family == "flux" else []
+    )
+    flux_guidance = (
+        _trace_flux_guidance(nodes, pos_id) if family == "flux" else None
     )
 
     width = _as_int(latent.get("inputs", {}).get("width"), 1024)
@@ -1162,6 +1205,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         loras=_collect_loras(nodes),
         flux_max_shift=flux_max_shift,
         flux_base_shift=flux_base_shift,
+        flux_guidance=flux_guidance,
         aura_shift=aura_shift,
         init_image=init_image,
         mask_image=mask_image,

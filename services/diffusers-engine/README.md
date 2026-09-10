@@ -88,6 +88,9 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   `EmptyFlux2LatentImage` + `ReferenceLatent` + denoise 1) is native via
   `Flux2KleinPipeline(image=…)` — multi-ref chains supported; not the same as
   strength img2img.
+- **FLUX.1 `FluxGuidance` + `EmptySD3LatentImage` are native** (Studio UltraReal /
+  Flux scaffolds). `FluxGuidance.guidance` maps to Diffusers `guidance_scale`;
+  KSampler.cfg stays the Comfy-side true-CFG knob (usually 1).
 - **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
   `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
   `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Studio Compose/Refine
