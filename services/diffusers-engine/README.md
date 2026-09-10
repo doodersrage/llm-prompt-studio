@@ -93,8 +93,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   KSampler.cfg stays the Comfy-side true-CFG knob (usually 1).
 - **`ImageScale` / `ResizeImage` on ref paths are allowed** (Studio Compose
   LoadImage → scale → VAEEncode → ReferenceLatent). Filename resolution walks
-  through the scale node; Diffusers still does its own ref resize. `Note` and
-  `ConditioningZeroOut` are passthrough (zero-out → empty negative).
+  through the scale node; Diffusers still does its own ref resize. `Note`,
+  `MarkdownNote`, `Reroute`, and `ConditioningZeroOut` are passthrough
+  (zero-out → empty negative). `LoadImageOutput` resolves like `LoadImage`.
+  Pack `LoraLoader|pysssss` chains collect into the fused LoRA list.
 - **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
   `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
   `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Studio Compose/Refine

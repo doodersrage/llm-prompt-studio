@@ -483,6 +483,45 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertIn(("Qwen-Image-GenatomyFixer.safetensors", 0.9), names)
         self.assertFalse(any(name == "ignored.safetensors" for name, _ in names))
 
+    def test_collects_pysssss_lora_loader(self) -> None:
+        graph = _qwen_graph()
+        graph["11"] = {
+            "class_type": "LoraLoader|pysssss",
+            "inputs": {
+                "model": ["1", 0],
+                "clip": ["2", 0],
+                "lora_name": "flymy_realism.safetensors",
+                "strength_model": 0.8,
+                "strength_clip": 0.5,
+            },
+        }
+        graph["7"]["inputs"]["model"] = ["11", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(
+            [(item.name, item.strength) for item in result.compiled.loras],
+            [("flymy_realism.safetensors", 0.8)],
+        )
+
+    def test_compiles_load_image_output_img2img(self) -> None:
+        graph = _sdxl_graph()
+        graph["20"] = {
+            "class_type": "LoadImageOutput",
+            "inputs": {"image": "gallery-init.png"},
+        }
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["1", 2]},
+        }
+        graph["5"]["inputs"]["latent_image"] = ["21", 0]
+        graph["5"]["inputs"]["denoise"] = 0.55
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "img2img")
+        self.assertEqual(result.compiled.init_image, "gallery-init.png")
+
     def test_controlnet_unresolvable_unsupported(self) -> None:
         # ControlNetApplyAdvanced present but not wired to a control_net loader
         # (e.g. a dangling/placeholder node) is a clear rejection, not a

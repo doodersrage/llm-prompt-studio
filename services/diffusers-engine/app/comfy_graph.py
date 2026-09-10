@@ -12,12 +12,15 @@ _LORA_OK = frozenset(
     {
         "LoraLoader",
         "LoraLoaderModelOnly",
+        "LoraLoader|pysssss",
         "Power Lora Loader (rgthree)",
     }
 )
 
-_IMG2IMG_OK = frozenset({"LoadImage", "VAEEncode"})
-_INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning", "VAEEncode"})
+_IMG2IMG_OK = frozenset({"LoadImage", "LoadImageOutput", "VAEEncode"})
+_INPAINT_OK = frozenset(
+    {"LoadImage", "LoadImageOutput", "LoadImageMask", "InpaintModelConditioning", "VAEEncode"}
+)
 
 # Pre-encode / ref-path resize (Studio Compose: LoadImage → ImageScale → VAEEncode).
 # Passthrough for compile — Diffusers pipelines resize refs themselves; we only
@@ -25,7 +28,7 @@ _INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning
 _IMAGE_SCALE_OK = frozenset({"ImageScale", "ResizeImage"})
 
 # Harmless / text-only wrappers that must not force a Comfy fallback.
-_PASSTHROUGH_OK = frozenset({"Note", "ConditioningZeroOut"})
+_PASSTHROUGH_OK = frozenset({"Note", "MarkdownNote", "Reroute", "ConditioningZeroOut"})
 
 # Native ControlNet: SDXL, classic Flux (not Flux2-Klein), and Qwen (plain
 # Union/Canny checkpoints only, not the mask-conditioned Inpainting variant —
@@ -398,12 +401,33 @@ def _is_flux_klein(clip_type: str | None, unet: str | None) -> bool:
     return "klein" in (unet or "").lower()
 
 
+def _is_lora_loader_type(ctype: str) -> bool:
+    """Stock LoRA loaders + ComfyUI-Custom-Scripts ``LoraLoader|pysssss`` variants."""
+    if ctype in _LORA_OK and ctype != "Power Lora Loader (rgthree)":
+        return True
+    base = ctype.split("|", 1)[0].strip()
+    return base in ("LoraLoader", "LoraLoaderModelOnly")
+
+
+def _is_load_image_type(ctype: str) -> bool:
+    return ctype in ("LoadImage", "LoadImageOutput")
+
+
+def _reroute_next_id(node: dict[str, Any]) -> str | None:
+    """Follow the first link through a Comfy Reroute node."""
+    for value in node.get("inputs", {}).values():
+        lid = _link_id(value)
+        if lid:
+            return lid
+    return None
+
+
 def _collect_loras(nodes: dict[str, dict[str, Any]]) -> list[CompiledLora]:
     loras: list[CompiledLora] = []
     for node in nodes.values():
         ctype = node["class_type"]
         inputs = node["inputs"]
-        if ctype in ("LoraLoader", "LoraLoaderModelOnly"):
+        if _is_lora_loader_type(ctype):
             name = _as_str(inputs.get("lora_name")).strip()
             if not name or name.startswith("{{"):
                 continue
@@ -448,13 +472,16 @@ def _resolve_load_image_name(
         if not node:
             return None
         ctype = node["class_type"]
-        if ctype == "LoadImage":
+        if _is_load_image_type(ctype):
             name = _as_str(node["inputs"].get("image")).strip()
             if not name or name.startswith("{{"):
                 return None
             return name
         if ctype in _IMAGE_SCALE_OK:
             current_id = _link_id(node["inputs"].get("image"))
+            continue
+        if ctype == "Reroute":
+            current_id = _reroute_next_id(node)
             continue
         return None
     return None
@@ -475,6 +502,8 @@ def _resolve_conditioning_text(
     if ctype == "ConditioningZeroOut":
         # Boogu Turbo / empty-negative — Diffusers gets "".
         return ""
+    if ctype == "Reroute":
+        return _resolve_conditioning_text(nodes, _reroute_next_id(node), branch)
     if ctype == "ReferenceLatent":
         inner_id = _link_id(node["inputs"].get("conditioning"))
         return _resolve_conditioning_text(nodes, inner_id, branch)
@@ -537,6 +566,9 @@ def _trace_flux_guidance(
         if ctype == "ReferenceLatent":
             current_id = _link_id(node["inputs"].get("conditioning"))
             continue
+        if ctype == "Reroute":
+            current_id = _reroute_next_id(node)
+            continue
         if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
             current_id = _link_id(node["inputs"].get("positive"))
             continue
@@ -576,6 +608,9 @@ def _trace_reference_images(
             continue
         if ctype == "FluxGuidance":
             current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype == "Reroute":
+            current_id = _reroute_next_id(node)
             continue
         if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
             current_id = _link_id(node["inputs"].get("positive"))
@@ -619,6 +654,9 @@ def _trace_qwen_edit(
                 if name:
                     ref_along_path.append(name)
             current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype == "Reroute":
+            current_id = _reroute_next_id(node)
             continue
         if ctype in (
             "ControlNetApply",
@@ -728,6 +766,9 @@ def _trace_controlnet_stack(
             continue
         if ctype in ("FluxGuidance", "ReferenceLatent"):
             current_id = _link_id(node["inputs"].get("conditioning"))
+            continue
+        if ctype == "Reroute":
+            current_id = _reroute_next_id(node)
             continue
         break
 
@@ -899,7 +940,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         )
 
     allowed = {"sdxl": _SDXL_OK, "flux": _FLUX_OK, "qwen": _QWEN_OK}[family]
-    unknown = sorted(types - allowed)
+    unknown = sorted(
+        t for t in (types - allowed) if not _is_lora_loader_type(t)
+    )
     if unknown:
         return ClassifyResult(
             supported=False,

@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: collect `LoraLoader|pysssss` (and other `LoraLoader|*` UI variants); treat `LoadImageOutput` like LoadImage; allow `MarkdownNote` / `Reroute` passthrough.
 - Diffusers engine: allow `ImageScale` / `ResizeImage` on ref paths (Studio Compose LoadImage→scale→VAEEncode) and passthrough `Note` / `ConditioningZeroOut` (empty negative).
 - Diffusers engine: Flux `FluxGuidance` + `EmptySD3LatentImage` (Studio UltraReal / FLUX.1 scaffolds) — `FluxGuidance.guidance` maps to Diffusers `guidance_scale` (not KSampler.cfg).
 - Diffusers engine: Qwen Image Edit Compose via `ReferenceLatent` → VAEEncode → LoadImage (Studio EmptySD3Latent + denoise 1); Edit-Plus now collects `image4`.
