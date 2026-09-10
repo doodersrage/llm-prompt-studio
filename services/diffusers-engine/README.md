@@ -14,16 +14,16 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   opencv; the rest use `controlnet-aux` (OpenPose / MiDaS / Lineart / HED /
   NormalBae / MLSD) with on-demand model downloads. Flux2-Klein ControlNet
   still falls back to ComfyUI — no vetted pipeline for Klein. SDXL and classic
-  Flux ControlNet combine with img2img/inpaint; Qwen plain Union CN is
-  txt2img-only, while the InstantX ControlNet-Inpainting checkpoint runs
-  natively on inpaint graphs. **SDXL also compiles stacked ControlNetApply
+  Flux ControlNet combine with img2img/inpaint; Qwen plain Union CN combines
+  with txt2img + img2img (vendored CN×img2img), while the InstantX
+  ControlNet-Inpainting checkpoint runs natively on inpaint graphs. **SDXL also compiles stacked ControlNetApply
   chains** (Studio’s 2nd–4th control images): plain checkpoints use
   `MultiControlNetModel`; multiple tasks on one xinsir Union file share a
   single `ControlNetUnionModel` with list `control_image` / `control_mode`.
   Mixed Union+plain or different Union files fall back to ComfyUI. Classic Flux
   stacks the same way via `FluxMultiControlNetModel` / InstantX Union multi-mode.
-  Qwen plain Union/Canny stacks via `QwenImageMultiControlNetModel` (txt2img);
-  InstantX mask-inpaint CN remains single-only.
+  Qwen plain Union/Canny stacks via `QwenImageMultiControlNetModel` (txt2img +
+  img2img via vendored CN×img2img); InstantX mask-inpaint CN remains single-only.
 - **SDXL InstantID** compiles natively (`InstantIDModelLoader` →
   `ApplyInstantID` / `ApplyInstantIDAdvanced` + InsightFace antelopev2).
   Drop InstantX `ip-adapter.bin` under `instantid/` (or Comfy `models/instantid/`)
@@ -96,8 +96,8 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   Classic Flux ControlNet + img2img/inpaint is also native
   (`FluxControlNetImg2ImgPipeline` / `FluxControlNetInpaintPipeline`).
   Qwen InstantX ControlNet-Inpainting is native on inpaint graphs
-  (`QwenImageControlNetInpaintPipeline`); plain Union CN + img2img stays on
-  ComfyUI.
+  (`QwenImageControlNetInpaintPipeline`); plain Union CN + img2img is native
+  via vendored `QwenImageControlNetImg2ImgPipeline`.
 - **Final/Max enrich upscale is native:** `UpscaleModelLoader` / `ImageUpscaleWithModel`
   run through Spandrel (same `.pth` files as Comfy `models/upscale_models`), then optional
   `ImageScaleBy` / `ImageBlur` via Pillow — so enrich graphs no longer force a Comfy

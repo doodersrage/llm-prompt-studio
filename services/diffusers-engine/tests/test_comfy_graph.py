@@ -956,7 +956,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.img2img_mode, "inpaint")
         self.assertIsNotNone(result.compiled.controlnet)
 
-    def test_qwen_controlnet_img2img_unsupported(self) -> None:
+    def test_compiles_qwen_controlnet_img2img(self) -> None:
         graph = self._controlnet_graph(
             _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",
         )
@@ -968,8 +968,10 @@ class ComfyGraphTests(unittest.TestCase):
         graph["8"]["inputs"]["latent_image"] = ["21", 0]
         graph["8"]["inputs"]["denoise"] = 0.55
         result = compile_workflow(graph)
-        self.assertFalse(result.supported)
-        self.assertIn("img2img", result.reason.lower())
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "img2img")
+        self.assertIsNotNone(result.compiled.controlnet)
 
     def test_compiles_qwen_controlnet_inpaint(self) -> None:
         graph = self._controlnet_graph(

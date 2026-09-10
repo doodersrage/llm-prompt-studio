@@ -837,12 +837,10 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         )
     if controlnets and img2img_mode != "txt2img":
         # SDXL + classic Flux: ControlNet img2img/inpaint pipelines.
-        # Qwen: mask-channel ControlNet-Inpainting via
-        # QwenImageControlNetInpaintPipeline (inpaint only — no Img2Img CN).
+        # Qwen: plain Union/Canny CN × img2img (vendored) + mask-channel
+        # InstantX ControlNet-Inpainting × inpaint.
         # Klein CN already rejected above.
-        if family == "qwen" and img2img_mode == "inpaint":
-            pass
-        elif family not in ("sdxl", "flux"):
+        if family not in ("sdxl", "flux", "qwen"):
             return ClassifyResult(
                 supported=False,
                 family=family,

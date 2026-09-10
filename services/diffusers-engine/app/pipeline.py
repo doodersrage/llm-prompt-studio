@@ -4654,11 +4654,11 @@ class PipelineHolder:
                     "Qwen ControlNet-Inpainting variant — use it with an inpaint "
                     "graph (init + mask), not txt2img/img2img."
                 )
-            if use_img2img and not expects_mask:
+            if use_inpaint and not expects_mask:
                 raise RuntimeError(
-                    "Plain Qwen Union/Canny ControlNet does not support "
-                    "img2img/inpaint — use the InstantX ControlNet-Inpainting "
-                    "checkpoint with an inpaint graph, or ComfyUI."
+                    "Plain Qwen Union/Canny ControlNet does not support inpaint — "
+                    "use the InstantX ControlNet-Inpainting checkpoint with an "
+                    "inpaint graph, or ComfyUI."
                 )
             try:
                 from diffusers import (
@@ -4674,6 +4674,9 @@ class PipelineHolder:
                     "Qwen-Image ControlNet release) — upgrade diffusers or use "
                     "ComfyUI for this workflow."
                 ) from exc
+            from app.pipeline_qwenimage_controlnet_img2img import (
+                QwenImageControlNetImg2ImgPipeline,
+            )
 
             is_multi = len(cn_stack) > 1
             control_images: list[Image.Image] = []
@@ -4779,6 +4782,10 @@ class PipelineHolder:
                 cn_pipe = QwenImageControlNetInpaintPipeline.from_pipe(
                     pipe, controlnet=self._controlnet_model
                 )
+            elif use_img2img:
+                cn_pipe = QwenImageControlNetImg2ImgPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
             else:
                 cn_pipe = QwenImageControlNetPipeline.from_pipe(
                     pipe, controlnet=self._controlnet_model
@@ -4866,6 +4873,11 @@ class PipelineHolder:
                 "num_inference_steps": step_count,
                 "generator": generator,
             }
+            if use_img2img and not expects_mask:
+                init = Image.open(init_image_path).convert("RGB")
+                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+                cn_kwargs["image"] = init
+                cn_kwargs["strength"] = strength
             if control_mask is not None:
                 cn_kwargs["control_mask"] = control_mask
             if prompt_embeds_mask is not None:
@@ -4892,11 +4904,12 @@ class PipelineHolder:
                 if callback_on_step_end is not None:
                     cn_kwargs.setdefault("callback_on_step_end", callback_on_step_end)
 
-            mode_label = (
-                "controlnet+inpaint"
-                if expects_mask
-                else f"controlnet({'+'.join(preprocessors)})"
-            )
+            if expects_mask:
+                mode_label = "controlnet+inpaint"
+            elif use_img2img:
+                mode_label = f"controlnet+img2img({'+'.join(preprocessors)})"
+            else:
+                mode_label = f"controlnet({'+'.join(preprocessors)})"
             if is_multi:
                 mode_label = f"multi-{mode_label}"
             cn_names = "+".join(Path(e["path"]).name for e in cn_stack)
@@ -4904,7 +4917,8 @@ class PipelineHolder:
                 f"[diffusers] compiled-qwen {mode_label} "
                 f"model={Path(model_path).name} cn={cn_names} "
                 f"{gen_width}x{gen_height} steps={step_count} cfg={cfg} "
-                f"cn_strength={strengths}",
+                f"cn_strength={strengths}"
+                + (f" denoise={strength:.2f}" if use_img2img and not expects_mask else ""),
                 flush=True,
             )
             try:
