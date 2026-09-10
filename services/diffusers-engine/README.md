@@ -4,7 +4,19 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 
 ### Scope / non-goals (parked)
 
-- **Not** for Play film, FaceDetailer, specialty enrich, or Video tool clips — switch to ComfyUI or Fal / Replicate / Grok / Gemini.
+- **Not** for Play film, FaceDetailer, specialty enrich (`LatentUpscale` /
+  `UltimateSDUpscale` multi-pass), Video, SD3 (`TripleCLIPLoader` /
+  `ModelSamplingSD3`), Boogu/Z-Image (`TextEncodeBooguEdit` / Nunchaku),
+  GGUF (`UnetLoaderGGUF`), or `SamplerCustom` graphs — switch to ComfyUI or a
+  cloud engine.
+- **Still not attempted: PuLID / FaceDetailer.** PuLID (Flux) needs EVA-CLIP +
+  attention hooks; FaceDetailer is Impact Pack. Keep those on ComfyUI.
+  InstantID is native for SDXL (txt2img + img2img + inpaint).
+- **Flux2-Klein ControlNet and plain strength img2img** stay Comfy — Diffusers
+  has no vetted Klein CN / strength-img2img pipeline (`image=` is KV/edit only).
+- **Qwen Image Edit + ControlNet** and **multi-ref Edit-Plus × inpaint** stay
+  Comfy. Single-image Edit-Plus × inpaint compiles via `QwenImageEditInpaintPipeline`.
+- **Dynamic VRAM / Comfy AIMDO parity** is a non-goal on Diffusers.
 - **ControlNet is Canny + OpenPose + depth + lineart + soft-edge + normal + MLSD
   for SDXL + classic Flux + Qwen (Union checkpoints).**
   `ControlNetLoader → [CannyEdgePreprocessor | DWPreprocessor | DepthAnythingV2Preprocessor |
@@ -103,8 +115,12 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   `ReferenceLatent` chains (encoder without `image*` slots) also compile to the
   same edit pipelines. Edit-Plus collects `image1`–`image4`. Single-image edit ×
   inpaint uses `QwenImageEditInpaintPipeline`. Edit encoder with no images still
-  compiles as plain txt2img. Edit + ControlNet / Edit-Plus + inpaint / edit +
-  VAEEncode img2img stays Comfy.
+  compiles as plain txt2img. Edit + ControlNet / multi-ref Edit-Plus + inpaint /
+  edit + VAEEncode img2img stays Comfy. Single-image Edit-Plus × inpaint is
+  native (downgrades to EditInpaint).
+- **Post polish:** `ImageSharpen` (UnsharpMask), `SaveImageAdvanced` /
+  `SaveImageExtended`, and basic `IPAdapter` (alongside `IPAdapterAdvanced`)
+  compile natively.
 - **Still not attempted: PuLID / FaceDetailer.** PuLID (Flux) needs EVA-CLIP +
   attention hooks; FaceDetailer is Impact Pack. Keep those on ComfyUI.
   InstantID is native for SDXL (txt2img + img2img + inpaint) — see InstantID note above.

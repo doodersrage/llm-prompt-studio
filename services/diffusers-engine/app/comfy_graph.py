@@ -90,10 +90,14 @@ _POST_OK = frozenset(
     {
         "ImageScaleBy",
         "ImageBlur",
+        "ImageSharpen",
         "UpscaleModelLoader",
         "UpscaleModel",
         "ImageUpscaleWithModel",
         "PreviewImage",
+        # Community SaveImage variants — same role as SaveImage for compile.
+        "SaveImageAdvanced",
+        "SaveImageExtended",
     }
 )
 
@@ -102,6 +106,8 @@ _IPADAPTER_OK = frozenset(
     {
         "IPAdapterModelLoader",
         "IPAdapterAdvanced",
+        # Stock / Plus simple apply (same ipadapter+image+weight wiring).
+        "IPAdapter",
         "CLIPVisionLoader",
     }
 )
@@ -142,6 +148,8 @@ _SDXL_OK = frozenset(
         "KSampler",
         "VAEDecode",
         "SaveImage",
+        "SaveImageAdvanced",
+        "SaveImageExtended",
     }
 )
 
@@ -171,6 +179,8 @@ _FLUX_OK = frozenset(
         "KSampler",
         "VAEDecode",
         "SaveImage",
+        "SaveImageAdvanced",
+        "SaveImageExtended",
     }
 )
 
@@ -198,6 +208,8 @@ _QWEN_OK = frozenset(
         "KSampler",
         "VAEDecode",
         "SaveImage",
+        "SaveImageAdvanced",
+        "SaveImageExtended",
     }
 )
 
@@ -290,6 +302,8 @@ class CompiledWorkflow:
     output_scale: float = 1.0
     # Optional ImageBlur radius applied before output_scale (Comfy soft pass).
     output_blur_radius: float | None = None
+    # Optional ImageSharpen percent (Pillow UnsharpMask) after blur / before scale.
+    output_sharpen: float | None = None
     # SDXL IP-Adapter identity lock (IPAdapterModelLoader → IPAdapterAdvanced).
     ip_adapter_model: str | None = None
     ip_adapter_image: str | None = None
@@ -794,8 +808,8 @@ def _trace_controlnet_stack(
 
 def _trace_output_post(
     nodes: dict[str, dict[str, Any]],
-) -> tuple[str | None, float, float | None]:
-    """Collect UpscaleModelLoader + ImageScaleBy / ImageBlur polish settings."""
+) -> tuple[str | None, float, float | None, float | None]:
+    """Collect UpscaleModelLoader + ImageScaleBy / ImageBlur / ImageSharpen."""
     upscale_model: str | None = None
     for node in nodes.values():
         if node["class_type"] not in ("UpscaleModelLoader", "UpscaleModel"):
@@ -808,6 +822,7 @@ def _trace_output_post(
     # Only count ImageScaleBy that is actually used by an upscale/save chain.
     scale = 1.0
     blur_radius: float | None = None
+    sharpen: float | None = None
     for node in nodes.values():
         ctype = node["class_type"]
         if ctype == "ImageScaleBy":
@@ -821,16 +836,25 @@ def _trace_output_post(
             )
             if blur_radius <= 0.05:
                 blur_radius = None
+        elif ctype == "ImageSharpen":
+            # Comfy: sharpen_radius / sigma / alpha — map alpha to UnsharpMask %.
+            alpha = _as_float(node["inputs"].get("alpha"), 1.0)
+            if alpha > 0.05:
+                sharpen = max(0.0, min(3.0, alpha))
 
-    return upscale_model, scale, blur_radius
+    return upscale_model, scale, blur_radius, sharpen
 
 
 def _trace_ip_adapter(
     nodes: dict[str, dict[str, Any]],
 ) -> tuple[str | None, str | None, float] | None:
-    """Find IPAdapterAdvanced + loader + reference LoadImage (SDXL identity)."""
+    """Find IPAdapter / IPAdapterAdvanced + loader + reference LoadImage (SDXL)."""
     apply_node = next(
-        (n for n in nodes.values() if n["class_type"] == "IPAdapterAdvanced"),
+        (
+            n
+            for n in nodes.values()
+            if n["class_type"] in ("IPAdapterAdvanced", "IPAdapter")
+        ),
         None,
     )
     if apply_node is None:
@@ -1172,25 +1196,31 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             ),
         )
     if qwen_edit_mode == "edit_plus" and img2img_mode == "inpaint":
-        return ClassifyResult(
-            supported=False,
-            family=family,
-            reason=(
-                "Qwen Image Edit-Plus + inpaint is not supported yet "
-                "(EditInpaint is single-image) — use TextEncodeQwenImageEdit "
-                "with one ref, or ComfyUI."
-            ),
-        )
+        if len(qwen_edit_images) > 1:
+            return ClassifyResult(
+                supported=False,
+                family=family,
+                reason=(
+                    "Qwen Image Edit-Plus + inpaint with multiple refs is not "
+                    "supported (EditInpaint is single-image) — use one ref or "
+                    "ComfyUI."
+                ),
+            )
+        # Single-image Edit-Plus × inpaint → EditInpaint path.
+        qwen_edit_mode = "edit"
+        qwen_edit_images = list(qwen_edit_images[:1])
 
     primary = controlnets[0] if controlnets else None
     controlnet_name = primary.name if primary else None
     controlnet_image = primary.image if primary else None
     controlnet_preprocessor = primary.preprocessor if primary else "none"
     controlnet_strength = primary.strength if primary else 1.0
-    upscale_model, output_scale, output_blur_radius = _trace_output_post(nodes)
+    upscale_model, output_scale, output_blur_radius, output_sharpen = (
+        _trace_output_post(nodes)
+    )
     ip_adapter_info = _trace_ip_adapter(nodes)
     has_ipadapter_node = any(
-        n["class_type"] in ("IPAdapterAdvanced", "IPAdapterModelLoader")
+        n["class_type"] in ("IPAdapterAdvanced", "IPAdapter", "IPAdapterModelLoader")
         for n in nodes.values()
     )
     if has_ipadapter_node and ip_adapter_info is None:
@@ -1199,7 +1229,8 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=(
                 "IP-Adapter present but could not resolve a reference LoadImage "
-                "(IPAdapterModelLoader → IPAdapterAdvanced → LoadImage required)."
+                "IPAdapterModelLoader → IPAdapter / IPAdapterAdvanced → "
+                "LoadImage required)."
             ),
         )
     if ip_adapter_info is not None and family != "sdxl":
@@ -1288,6 +1319,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         upscale_model=upscale_model,
         output_scale=output_scale,
         output_blur_radius=output_blur_radius,
+        output_sharpen=output_sharpen,
         ip_adapter_model=ip_adapter_model,
         ip_adapter_image=ip_adapter_image,
         ip_adapter_strength=ip_adapter_strength,

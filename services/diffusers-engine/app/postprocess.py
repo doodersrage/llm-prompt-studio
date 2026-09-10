@@ -66,12 +66,22 @@ def apply_output_post(
     method: str | None = "lanczos",
     moire_blur_sigma: float | None = None,
     moire_downscale: float | None = None,
+    sharpen: float | None = None,
 ) -> Image.Image:
-    """Anti-moiré soft blur → size upscale → optional Max mild resample."""
+    """Anti-moiré soft blur → optional sharpen → size upscale → Max resample."""
     out = image
     if moire_blur_sigma is not None and float(moire_blur_sigma) > 0.05:
         logger.info("Output moiré polish blur σ=%.2f", float(moire_blur_sigma))
         out = _soft_blur(out, sigma=float(moire_blur_sigma))
+
+    if sharpen is not None and float(sharpen) > 0.05:
+        # Comfy ImageSharpen.alpha ≈ UnsharpMask percent (radius=2, percent≈100*α).
+        percent = int(round(100.0 * float(sharpen)))
+        percent = max(1, min(300, percent))
+        logger.info("Output sharpen UnsharpMask percent=%d", percent)
+        out = out.filter(
+            ImageFilter.UnsharpMask(radius=2, percent=percent, threshold=2)
+        )
 
     if scale is not None and float(scale) > 1.001:
         out = _resize(out, scale=float(scale), method=method)

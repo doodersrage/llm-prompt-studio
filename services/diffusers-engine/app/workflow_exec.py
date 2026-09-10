@@ -59,6 +59,7 @@ def _apply_output_post(compiled: CompiledWorkflow, image: Image.Image) -> Image.
         scale=compiled.output_scale if compiled.output_scale > 1.001 else None,
         method="lanczos",
         moire_blur_sigma=compiled.output_blur_radius,
+        sharpen=compiled.output_sharpen,
     )
 
 
@@ -372,6 +373,7 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "upscale_model": compiled.upscale_model,
         "output_scale": compiled.output_scale,
         "output_blur_radius": compiled.output_blur_radius,
+        "output_sharpen": compiled.output_sharpen,
         "ip_adapter_model": compiled.ip_adapter_model,
         "ip_adapter_image": compiled.ip_adapter_image,
         "ip_adapter_strength": compiled.ip_adapter_strength,

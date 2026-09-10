@@ -1107,7 +1107,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.mask_image, "mask.png")
         self.assertEqual(result.compiled.positive, "fix the sky")
 
-    def test_qwen_edit_plus_inpaint_unsupported(self) -> None:
+    def test_qwen_edit_plus_multi_inpaint_unsupported(self) -> None:
         graph = _qwen_graph()
         graph["4"] = {
             "class_type": "TextEncodeQwenImageEditPlus",
@@ -1143,7 +1143,88 @@ class ComfyGraphTests(unittest.TestCase):
         graph["8"]["inputs"]["denoise"] = 0.7
         result = compile_workflow(graph)
         self.assertFalse(result.supported)
-        self.assertIn("Edit-Plus", result.reason)
+        self.assertIn("multiple refs", result.reason)
+
+    def test_compiles_qwen_edit_plus_single_inpaint(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "fix sky",
+                "clip": ["2", 0],
+                "image1": ["20", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "", "clip": ["2", 0]},
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "a.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["22"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "vae": ["3", 0],
+                "pixels": ["20", 0],
+                "mask": ["21", 0],
+                "noise_mask": True,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["22", 0]
+        graph["8"]["inputs"]["negative"] = ["22", 1]
+        graph["8"]["inputs"]["latent_image"] = ["22", 2]
+        graph["8"]["inputs"]["denoise"] = 0.7
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit")
+        self.assertEqual(result.compiled.qwen_edit_images, ["a.png"])
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+
+    def test_compiles_image_sharpen_and_save_alias(self) -> None:
+        graph = _sdxl_graph()
+        graph["8"] = {
+            "class_type": "ImageSharpen",
+            "inputs": {
+                "image": ["6", 0],
+                "sharpen_radius": 1,
+                "sigma": 1.0,
+                "alpha": 1.0,
+            },
+        }
+        graph["7"] = {
+            "class_type": "SaveImageAdvanced",
+            "inputs": {"images": ["8", 0], "filename_prefix": "ComfyUI"},
+        }
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.output_sharpen, 1.0)
+
+    def test_compiles_sdxl_ip_adapter_basic(self) -> None:
+        graph = _sdxl_graph()
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "face.png"}}
+        graph["21"] = {
+            "class_type": "IPAdapterModelLoader",
+            "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+        }
+        graph["22"] = {
+            "class_type": "IPAdapter",
+            "inputs": {
+                "model": ["1", 0],
+                "ipadapter": ["21", 0],
+                "image": ["20", 0],
+                "weight": 0.6,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["22", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.ip_adapter_image, "face.png")
+        self.assertAlmostEqual(result.compiled.ip_adapter_strength, 0.6)
 
     def test_compiles_qwen_image_edit(self) -> None:
         graph = _qwen_graph()
