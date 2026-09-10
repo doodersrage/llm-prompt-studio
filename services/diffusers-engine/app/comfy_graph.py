@@ -21,10 +21,15 @@ _INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning
 
 # Native ControlNet: SDXL, classic Flux (not Flux2-Klein), and Qwen (plain
 # Union/Canny checkpoints only, not the mask-conditioned Inpainting variant —
-# see safetensors_peek.qwen_controlnet_expects_mask). Only Canny has a local
-# preprocessor (opencv); pose/depth graphs still fall back to ComfyUI because
-# DWPreprocessor / DepthAnythingV2Preprocessor need extra models we don't ship.
-_CONTROLNET_PREPROCESSOR_OK = frozenset({"CannyEdgePreprocessor"})
+# see safetensors_peek.qwen_controlnet_expects_mask). Canny is opencv-local;
+# pose/depth use controlnet-aux (OpenPose / MiDaS) with on-demand downloads.
+_CONTROLNET_PREPROCESSOR_OK = frozenset(
+    {
+        "CannyEdgePreprocessor",
+        "DWPreprocessor",
+        "DepthAnythingV2Preprocessor",
+    }
+)
 _CONTROLNET_OK = frozenset(
     {
         "ControlNetLoader",
@@ -106,8 +111,6 @@ _ALWAYS_UNSUPPORTED = frozenset(
         "HunyuanImageToVideo",
         "TextEncodeQwenImageEdit",
         "TextEncodeQwenImageEditPlus",
-        "DWPreprocessor",
-        "DepthAnythingV2Preprocessor",
     }
 )
 
@@ -146,7 +149,7 @@ class CompiledWorkflow:
     img2img_mode: Literal["txt2img", "img2img", "inpaint"] = "txt2img"
     controlnet: str | None = None
     controlnet_image: str | None = None
-    controlnet_preprocessor: Literal["none", "canny"] = "none"
+    controlnet_preprocessor: Literal["none", "canny", "openpose", "depth"] = "none"
     controlnet_strength: float = 1.0
 
 
@@ -347,10 +350,10 @@ def _resolve_conditioning_text(
 
 def _trace_controlnet(
     nodes: dict[str, dict[str, Any]],
-) -> tuple[str, str, Literal["none", "canny"], float] | None:
+) -> tuple[str, str, Literal["none", "canny", "openpose", "depth"], float] | None:
     """Find a single ControlNetApply(Advanced) node and resolve its
-    control_net checkpoint + source image (through CannyEdgePreprocessor when
-    present). Returns None when no ControlNet node exists in the graph."""
+    control_net checkpoint + source image (through Canny / DWPose / Depth
+    preprocessors when present). Returns None when no ControlNet node exists."""
     apply_node = next(
         (
             n
@@ -372,9 +375,16 @@ def _trace_controlnet(
 
     image_id = _link_id(inputs.get("image"))
     image_node = nodes.get(image_id or "", {})
-    preprocessor: Literal["none", "canny"] = "none"
-    if image_node.get("class_type") == "CannyEdgePreprocessor":
+    preprocessor: Literal["none", "canny", "openpose", "depth"] = "none"
+    ctype = image_node.get("class_type")
+    if ctype == "CannyEdgePreprocessor":
         preprocessor = "canny"
+        image_id = _link_id(image_node["inputs"].get("image"))
+    elif ctype == "DWPreprocessor":
+        preprocessor = "openpose"
+        image_id = _link_id(image_node["inputs"].get("image"))
+    elif ctype == "DepthAnythingV2Preprocessor":
+        preprocessor = "depth"
         image_id = _link_id(image_node["inputs"].get("image"))
 
     control_image = _resolve_load_image_name(nodes, image_id)

@@ -130,37 +130,20 @@ def dequantize_comfy_fp8_weight(weight: Any, scale: Any, *, dtype: Any) -> Any:
     return dequant
 
 
-def load_qwen25_vl_from_single_file(
+def load_comfy_safetensors_state(
     path: str | Path,
     *,
-    config_dir: str | Path,
-    dtype: Any,
-) -> Any:
-    """Load Comfy qwen_2.5_vl_*.safetensors into Qwen2_5_VLForConditionalGeneration.
+    dtype: Any | None = None,
+) -> tuple[dict[str, Any], int]:
+    """Read a Comfy drop-in safetensors, dequantizing ``*_fp8_scaled`` weights.
 
-    Accepts bf16 drop-ins and Comfy ``*_fp8_scaled.safetensors`` (dequantized to
-    ``dtype`` via per-layer ``.scale_weight`` — activation ``.scale_input`` is ignored).
-
-    Uses meta+assign so we never hold a hub TE shell *and* the drop-in weights
-    at once (that previously peaked ~32GB host RAM and thrashed into swap).
+    Returns ``(state_dict, dequantized_layer_count)``. Skips ``.scale_input``,
+    ``scaled_fp8``, and ``.comfy_quant`` metadata keys.
     """
-    import torch
     from safetensors import safe_open
-    from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
 
     path = Path(path)
-    config_dir = Path(config_dir)
     fp8_scaled = is_fp8_scaled_name(path.name)
-
-    config = Qwen2_5_VLConfig.from_pretrained(str(config_dir), local_files_only=True)
-    print(
-        f"[diffusers] Qwen TE meta+assign from {path.name}"
-        + (" (fp8-scaled → dequant)" if fp8_scaled else "")
-        + "…",
-        flush=True,
-    )
-
-    # One weight copy via safe_open (mmap-backed reads), not load_file + hub shell.
     state: dict[str, Any] = {}
     dequantized = 0
     with safe_open(str(path), framework="pt", device="cpu") as handle:
@@ -183,18 +166,138 @@ def load_qwen25_vl_from_single_file(
                 if scale is not None:
                     tensor = dequantize_comfy_fp8_weight(tensor, scale, dtype=dtype)
                     dequantized += 1
+            elif dtype is not None and hasattr(tensor, "to"):
+                try:
+                    if getattr(tensor, "dtype", None) != dtype:
+                        tensor = tensor.to(dtype=dtype)
+                except Exception:
+                    pass
             state[key] = tensor
+    if fp8_scaled and dequantized < 50:
+        raise RuntimeError(
+            f"{path.name} looked fp8-scaled but only dequantized {dequantized} "
+            "layers — expected Comfy .weight + .scale_weight pairs."
+        )
+    return state, dequantized
+
+
+def load_t5_encoder_from_single_file(
+    path: str | Path,
+    *,
+    dtype: Any,
+    hub_id: str = "google/t5-v1_1-xxl",
+) -> Any:
+    """Load Comfy ``t5xxl_*.safetensors`` (bf16 or fp8-scaled) into ``T5EncoderModel``.
+
+    Dequantizes Comfy ``*_fp8_scaled`` via ``.scale_weight``. Uses meta+assign so
+    we never hold a hub TE shell and the drop-in weights at once.
+    """
+    import torch
+    from transformers import T5Config, T5EncoderModel
+
+    path = Path(path)
+    fp8_scaled = is_fp8_scaled_name(path.name)
+    print(
+        f"[diffusers] T5 TE meta+assign from {path.name}"
+        + (" (fp8-scaled → dequant)" if fp8_scaled else "")
+        + "…",
+        flush=True,
+    )
+
+    try:
+        config = T5Config.from_pretrained(hub_id, local_files_only=True)
+    except Exception:
+        config = T5Config.from_pretrained(hub_id)
+
+    state, dequantized = load_comfy_safetensors_state(path, dtype=dtype)
     if fp8_scaled:
         print(
-            f"[diffusers] Qwen TE dequantized {dequantized} fp8 layers "
-            f"({len(scales)} scale_weight entries)",
+            f"[diffusers] T5 TE dequantized {dequantized} fp8 layers",
             flush=True,
         )
-        if dequantized < 100:
-            raise RuntimeError(
-                f"{path.name} looked fp8-scaled but only dequantized {dequantized} "
-                "layers — expected Comfy .weight + .scale_weight pairs."
-            )
+
+    with torch.device("meta"):
+        model = T5EncoderModel(config)
+
+    try:
+        missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
+    except TypeError as assign_exc:
+        del state
+        gc.collect()
+        raise RuntimeError(
+            "Need PyTorch assign=True to load T5 TE without doubling RAM"
+        ) from assign_exc
+
+    loaded = len(state) - len(unexpected)
+    state.clear()
+    del state
+    gc.collect()
+
+    if loaded < 100:
+        raise RuntimeError(
+            f"T5 TE load failed for {path.name}: only {loaded} keys matched "
+            f"(missing={len(missing)} unexpected={len(unexpected)})"
+        )
+
+    if dtype is not None:
+        try:
+            cast_count = 0
+            for param in model.parameters():
+                if param.dtype != dtype:
+                    param.data = param.data.to(dtype=dtype)
+                    cast_count += 1
+            if cast_count:
+                print(
+                    f"[diffusers] T5 TE cast {cast_count} params → {dtype!r}",
+                    flush=True,
+                )
+        except Exception as cast_exc:
+            print(f"[diffusers] T5 TE dtype cast soft-fail: {cast_exc}", flush=True)
+
+    print(
+        f"[diffusers] T5 TE from drop-in {path.name} "
+        f"(matched≈{loaded}, missing={len(missing)}, host-meta+assign)",
+        flush=True,
+    )
+    gc.collect()
+    return model
+
+
+def load_qwen25_vl_from_single_file(
+    path: str | Path,
+    *,
+    config_dir: str | Path,
+    dtype: Any,
+) -> Any:
+    """Load Comfy qwen_2.5_vl_*.safetensors into Qwen2_5_VLForConditionalGeneration.
+
+    Accepts bf16 drop-ins and Comfy ``*_fp8_scaled.safetensors`` (dequantized to
+    ``dtype`` via per-layer ``.scale_weight`` — activation ``.scale_input`` is ignored).
+
+    Uses meta+assign so we never hold a hub TE shell *and* the drop-in weights
+    at once (that previously peaked ~32GB host RAM and thrashed into swap).
+    """
+    import torch
+    from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
+
+    path = Path(path)
+    config_dir = Path(config_dir)
+    fp8_scaled = is_fp8_scaled_name(path.name)
+
+    config = Qwen2_5_VLConfig.from_pretrained(str(config_dir), local_files_only=True)
+    print(
+        f"[diffusers] Qwen TE meta+assign from {path.name}"
+        + (" (fp8-scaled → dequant)" if fp8_scaled else "")
+        + "…",
+        flush=True,
+    )
+
+    state, dequantized = load_comfy_safetensors_state(path, dtype=dtype)
+    if fp8_scaled:
+        print(
+            f"[diffusers] Qwen TE dequantized {dequantized} fp8 layers",
+            flush=True,
+        )
     state = remap_qwen25_vl_comfy_keys(state)
 
     with torch.device("meta"):

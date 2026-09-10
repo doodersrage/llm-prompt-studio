@@ -7,6 +7,7 @@ from app.dropin_loaders import (
     is_flux_klein_unet,
     is_fp8_scaled_name,
     is_rapid_aio_name,
+    load_comfy_safetensors_state,
     remap_qwen_unet_comfy_keys,
 )
 
@@ -36,6 +37,19 @@ class DropinLoaderHelpers(unittest.TestCase):
         self.assertEqual(out.dtype, torch.bfloat16)
         self.assertEqual(tuple(out.shape), (2, 2))
         self.assertTrue(torch.allclose(out.float(), torch.full((2, 2), 0.5), atol=0.05))
+
+    def test_load_comfy_safetensors_state_rejects_empty_fp8(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import torch
+        from safetensors.torch import save_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fake_fp8_scaled.safetensors"
+            save_file({"scaled_fp8": torch.zeros(1)}, str(path))
+            with self.assertRaises(RuntimeError):
+                load_comfy_safetensors_state(path, dtype=torch.bfloat16)
 
     def test_remap_qwen_unet_comfy_keys(self) -> None:
         remapped = remap_qwen_unet_comfy_keys(

@@ -2275,10 +2275,14 @@ class PipelineHolder:
             from app.safetensors_peek import sdxl_controlnet_is_union
 
             control_image = Image.open(controlnet_image_path).convert("RGB")
-            if controlnet_preprocessor == "canny":
-                from app.controlnet_preprocess import canny as _canny_preprocess
+            from app.controlnet_preprocess import (
+                apply_controlnet_preprocess,
+                union_control_mode,
+            )
 
-                control_image = _canny_preprocess(control_image)
+            control_image = apply_controlnet_preprocess(
+                control_image, controlnet_preprocessor
+            )
             control_image = control_image.resize(
                 (gen_width, gen_height), Image.Resampling.LANCZOS
             )
@@ -2354,19 +2358,8 @@ class PipelineHolder:
             }
             if is_union:
                 # xinsir's 6-task taxonomy: 0 openpose, 1 depth, 2 soft-edge,
-                # 3 canny/lineart/mlsd, 4 normal, 5 segment. Only Canny is wired
-                # up as a preprocessor today, so this only ever needs bucket 3 —
-                # flagged here rather than hardcoded silently in case a future
-                # preprocessor (or a "none" pass-through of a non-canny image)
-                # needs a different bucket.
-                control_mode = 3
-                if controlnet_preprocessor not in ("canny", "none"):
-                    print(
-                        f"[diffusers] controlnet preprocessor={controlnet_preprocessor!r} "
-                        f"has no known Union control_mode mapping — defaulting to "
-                        f"canny's bucket (3); verify against the checkpoint's model card.",
-                        flush=True,
-                    )
+                # 3 canny/lineart/mlsd, 4 normal, 5 segment.
+                control_mode = union_control_mode(controlnet_preprocessor)
                 cn_kwargs["control_image"] = [control_image]
                 cn_kwargs["control_mode"] = [control_mode]
             else:
@@ -2482,6 +2475,7 @@ class PipelineHolder:
             is_fp8_scaled_name,
             load_clip_l_text_encoder,
             load_qwen3_causal_from_single_file,
+            load_t5_encoder_from_single_file,
         )
         from diffusers import (
             AutoencoderKL,
@@ -2583,20 +2577,36 @@ class PipelineHolder:
                     f"Flux T5 encoder not found in drop-in folders: {clip2_name}"
                 )
             if is_fp8_scaled_name(clip2_path.name):
-                # Diffusers can't ingest Comfy fp8-scaled T5 directly — use hub TE2.
-                print(
-                    f"[diffusers] Flux T5 {clip2_path.name} is fp8-scaled; "
-                    "using hub T5EncoderModel (weights on disk kept for Comfy)",
-                    flush=True,
-                )
-            else:
                 try:
-                    text_encoder_2 = T5EncoderModel.from_pretrained(
-                        str(clip2_path.parent),
-                        torch_dtype=dtype,
+                    text_encoder_2 = load_t5_encoder_from_single_file(
+                        clip2_path, dtype=dtype
                     )
                 except Exception as exc:
-                    print(f"[diffusers] local T5 load failed ({exc}); hub TE2", flush=True)
+                    print(
+                        f"[diffusers] Flux T5 fp8-scaled load failed ({exc}); "
+                        "falling back to hub TE2",
+                        flush=True,
+                    )
+            else:
+                try:
+                    text_encoder_2 = load_t5_encoder_from_single_file(
+                        clip2_path, dtype=dtype
+                    )
+                except Exception as exc:
+                    print(
+                        f"[diffusers] local T5 load failed ({exc}); trying folder/hub",
+                        flush=True,
+                    )
+                    try:
+                        text_encoder_2 = T5EncoderModel.from_pretrained(
+                            str(clip2_path.parent),
+                            torch_dtype=dtype,
+                        )
+                    except Exception as hub_exc:
+                        print(
+                            f"[diffusers] local T5 folder load failed ({hub_exc}); hub TE2",
+                            flush=True,
+                        )
 
         vae = None
         if vae_name and not str(vae_name).startswith("{{"):
@@ -3534,10 +3544,11 @@ class PipelineHolder:
             from diffusers import FluxControlNetModel, FluxControlNetPipeline
 
             control_image = Image.open(controlnet_image_path).convert("RGB")
-            if controlnet_preprocessor == "canny":
-                from app.controlnet_preprocess import canny as _canny_preprocess
+            from app.controlnet_preprocess import apply_controlnet_preprocess
 
-                control_image = _canny_preprocess(control_image)
+            control_image = apply_controlnet_preprocess(
+                control_image, controlnet_preprocessor
+            )
             control_image = control_image.resize(
                 (int(width), int(height)), Image.Resampling.LANCZOS
             )
@@ -4003,10 +4014,11 @@ class PipelineHolder:
                 ) from exc
 
             control_image = Image.open(controlnet_image_path).convert("RGB")
-            if controlnet_preprocessor == "canny":
-                from app.controlnet_preprocess import canny as _canny_preprocess
+            from app.controlnet_preprocess import apply_controlnet_preprocess
 
-                control_image = _canny_preprocess(control_image)
+            control_image = apply_controlnet_preprocess(
+                control_image, controlnet_preprocessor
+            )
             control_image = control_image.resize(
                 (gen_width, gen_height), Image.Resampling.LANCZOS
             )

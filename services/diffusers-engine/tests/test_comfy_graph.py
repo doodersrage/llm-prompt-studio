@@ -481,6 +481,28 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.positive, "a glassblower")
         self.assertEqual(result.compiled.negative, "blurry")
 
+    def test_compiles_sdxl_controlnet_openpose(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "DWPreprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "openpose")
+
+    def test_compiles_sdxl_controlnet_depth(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        graph["32"]["class_type"] = "DepthAnythingV2Preprocessor"
+        graph["32"]["inputs"] = {"image": ["31", 0]}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.controlnet_preprocessor, "depth")
+
     def test_compiles_flux_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(
             _flux_graph(), positive_id="4", negative_id="5", ksampler_id="8",

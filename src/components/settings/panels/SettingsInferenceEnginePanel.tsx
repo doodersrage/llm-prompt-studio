@@ -40,7 +40,7 @@ export default function SettingsInferenceEnginePanel({
     <ToolSection
       id="settings-comfyui-inference-engine"
       title="Inference engine"
-      description="ComfyUI is the default generate path (Qwen Lightning bf16, Final/Max enrich, specialty graphs, Play film). Diffusers is optional local stills (txt2img/img2img, native inpaint, Canny ControlNet for SDXL/Flux/Qwen). Fal, Replicate, and Runway queue stills and clips. Grok and Gemini queue stills plus native video. ChatGPT stays stills. Cloud engines have no workflows, LoRAs, or live latents."
+      description="ComfyUI is the default generate path (Qwen Lightning bf16, Final/Max enrich, specialty graphs, Play film). Diffusers is optional local stills (txt2img/img2img, native inpaint, Canny/OpenPose/depth ControlNet for SDXL/Flux/Qwen). Fal, Replicate, and Runway queue stills and clips. Grok and Gemini queue stills plus native video. ChatGPT stays stills. Cloud engines have no workflows, LoRAs, or live latents."
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1">

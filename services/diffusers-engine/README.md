@@ -5,14 +5,13 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 ### Scope / non-goals (parked)
 
 - **Not** for Play film, FaceDetailer, specialty enrich, or Video tool clips — switch to ComfyUI or Fal / Replicate / Grok / Gemini.
-- **ControlNet is Canny-only, SDXL + classic Flux + Qwen (Union checkpoints only).**
-  `ControlNetLoader → [CannyEdgePreprocessor] → ControlNetApply(Advanced)` compiles natively
-  via `StableDiffusionXLControlNetPipeline` / `FluxControlNetPipeline` /
-  `QwenImageControlNetPipeline` (local opencv Canny, no extra models to download beyond the
-  ControlNet checkpoint itself, dropped into `controlnets/` or `$COMFYUI_ROOT/models/controlnet`).
-  Pose/depth (`DWPreprocessor`, `DepthAnythingV2Preprocessor`) and Flux2-Klein ControlNet
-  still fall back to ComfyUI — no bundled pose/depth models, and no vetted pipeline for Klein.
-  ControlNet does not combine with img2img/inpaint.
+- **ControlNet is Canny + OpenPose + depth for SDXL + classic Flux + Qwen (Union checkpoints).**
+  `ControlNetLoader → [CannyEdgePreprocessor | DWPreprocessor | DepthAnythingV2Preprocessor] → ControlNetApply(Advanced)`
+  compiles natively via `StableDiffusionXLControlNetPipeline` /
+  `FluxControlNetPipeline` / `QwenImageControlNetPipeline`. Canny is local
+  opencv; pose/depth use `controlnet-aux` (OpenPose / MiDaS) with on-demand
+  model downloads. Flux2-Klein ControlNet still falls back to ComfyUI — no
+  vetted pipeline for Klein. ControlNet does not combine with img2img/inpaint.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra
@@ -59,8 +58,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   into the pipeline dtype, so CLIPLoader can point at the smaller file without
   forcing a hub bf16 re-download. Prefer the local bf16 file
   (`qwen_2.5_vl_7b.safetensors`, ~16.6GB) when both exist — slightly higher
-  fidelity, and inventory still lists bf16 first. Flux T5 `*_fp8_scaled` still
-  uses the hub TE2 path (not yet dequantized the same way).
+  fidelity, and inventory still lists bf16 first.
+- **Flux T5: Comfy ``t5xxl_*_fp8_scaled`` also loads locally** via the same
+  `.scale_weight` dequant path (`load_t5_encoder_from_single_file`) — no hub TE2
+  re-download when the drop-in is present.
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint stays unsupported — no mask-capable pipeline for it.
 - **Still not attempted: IP-Adapter/InstantID/PuLID identity lock, FaceDetailer.** Both are
