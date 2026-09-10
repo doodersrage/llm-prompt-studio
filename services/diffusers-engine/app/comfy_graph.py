@@ -180,10 +180,33 @@ _ALWAYS_UNSUPPORTED = frozenset(
 )
 
 
+ControlnetPreprocessorName = Literal[
+    "none",
+    "canny",
+    "openpose",
+    "depth",
+    "lineart",
+    "lineart_anime",
+    "softedge",
+    "normal",
+    "mlsd",
+]
+
+
 @dataclass(frozen=True)
 class CompiledLora:
     name: str
     strength: float
+
+
+@dataclass(frozen=True)
+class CompiledControlNet:
+    """One ControlNetApply(Advanced) link in the sampler conditioning chain."""
+
+    name: str
+    image: str
+    preprocessor: ControlnetPreprocessorName = "none"
+    strength: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -212,19 +235,12 @@ class CompiledWorkflow:
     init_image: str | None = None
     mask_image: str | None = None
     img2img_mode: Literal["txt2img", "img2img", "inpaint"] = "txt2img"
+    # Full ControlNet stack (outermost Apply first). Empty = no ControlNet.
+    # Scalar controlnet_* fields mirror controlnets[0] for single-CN callers.
+    controlnets: list[CompiledControlNet] = field(default_factory=list)
     controlnet: str | None = None
     controlnet_image: str | None = None
-    controlnet_preprocessor: Literal[
-        "none",
-        "canny",
-        "openpose",
-        "depth",
-        "lineart",
-        "lineart_anime",
-        "softedge",
-        "normal",
-        "mlsd",
-    ] = "none"
+    controlnet_preprocessor: ControlnetPreprocessorName = "none"
     controlnet_strength: float = 1.0
     # Neural ESRGAN / Spandrel model from UpscaleModelLoader (post-decode).
     upscale_model: str | None = None
@@ -433,42 +449,12 @@ def _resolve_conditioning_text(
     return ""
 
 
-def _trace_controlnet(
+def _resolve_one_controlnet_apply(
     nodes: dict[str, dict[str, Any]],
-) -> (
-    tuple[
-        str,
-        str,
-        Literal[
-            "none",
-            "canny",
-            "openpose",
-            "depth",
-            "lineart",
-            "lineart_anime",
-            "softedge",
-            "normal",
-            "mlsd",
-        ],
-        float,
-    ]
-    | None
-):
-    """Find a single ControlNetApply(Advanced) node and resolve its
-    control_net checkpoint + source image (through known preprocessors when
-    present). Returns None when no ControlNet node exists."""
-    apply_node = next(
-        (
-            n
-            for n in nodes.values()
-            if n["class_type"] in ("ControlNetApply", "ControlNetApplyAdvanced")
-        ),
-        None,
-    )
-    if apply_node is None:
-        return None
+    apply_node: dict[str, Any],
+) -> CompiledControlNet | None:
+    """Resolve one ControlNetApply(Advanced) to checkpoint + image + preprocessor."""
     inputs = apply_node["inputs"]
-
     loader = nodes.get(_link_id(inputs.get("control_net")) or "", {})
     if loader.get("class_type") != "ControlNetLoader":
         return None
@@ -478,17 +464,7 @@ def _trace_controlnet(
 
     image_id = _link_id(inputs.get("image"))
     image_node = nodes.get(image_id or "", {})
-    preprocessor: Literal[
-        "none",
-        "canny",
-        "openpose",
-        "depth",
-        "lineart",
-        "lineart_anime",
-        "softedge",
-        "normal",
-        "mlsd",
-    ] = "none"
+    preprocessor: ControlnetPreprocessorName = "none"
     ctype = image_node.get("class_type")
     mapped = _PREPROCESSOR_BY_CLASS.get(ctype or "")
     if mapped is not None:
@@ -500,7 +476,67 @@ def _trace_controlnet(
         return None
 
     strength = _as_float(inputs.get("strength"), 1.0)
-    return controlnet_name, control_image, preprocessor, strength
+    return CompiledControlNet(
+        name=controlnet_name,
+        image=control_image,
+        preprocessor=preprocessor,
+        strength=strength,
+    )
+
+
+def _trace_controlnet_stack(
+    nodes: dict[str, dict[str, Any]],
+    sampler_positive_id: str | None,
+) -> list[CompiledControlNet] | None:
+    """Walk sampler positive → ControlNetApply* chain (outermost first).
+
+    Also steps through ``InpaintModelConditioning`` (common ControlNet+inpaint
+    wiring). Returns an empty list when no ControlNet Apply exists. Returns
+    None when Apply nodes exist but any entry cannot be resolved.
+
+    If Apply nodes exist but none sit on the sampler positive chain (legacy /
+    miswired graphs), fall back to every resolvable Apply in the graph so a
+    single dangling-but-complete ControlNet still compiles.
+    """
+    stack: list[CompiledControlNet] = []
+    current_id = sampler_positive_id
+    seen: set[str] = set()
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = nodes.get(current_id)
+        if not node:
+            break
+        ctype = node["class_type"]
+        if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
+            entry = _resolve_one_controlnet_apply(nodes, node)
+            if entry is None:
+                return None
+            stack.append(entry)
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        if ctype == "InpaintModelConditioning":
+            current_id = _link_id(node["inputs"].get("positive"))
+            continue
+        break
+
+    if stack:
+        return stack
+
+    apply_nodes = [
+        n
+        for n in nodes.values()
+        if n["class_type"] in ("ControlNetApply", "ControlNetApplyAdvanced")
+    ]
+    if not apply_nodes:
+        return []
+
+    fallback: list[CompiledControlNet] = []
+    for node in apply_nodes:
+        entry = _resolve_one_controlnet_apply(nodes, node)
+        if entry is None:
+            return None
+        fallback.append(entry)
+    return fallback
 
 
 def _trace_output_post(
@@ -694,29 +730,30 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             reason="Flux2-Klein inpaint has no mask-capable pipeline yet — use ComfyUI.",
         )
 
-    controlnet_info = _trace_controlnet(nodes)
+    controlnet_stack = _trace_controlnet_stack(nodes, pos_id)
     has_controlnet_node = any(
         n["class_type"] in ("ControlNetApply", "ControlNetApplyAdvanced")
         for n in nodes.values()
     )
-    if has_controlnet_node and controlnet_info is None:
+    if has_controlnet_node and controlnet_stack is None:
         return ClassifyResult(
             supported=False,
             family=family,
             reason=(
                 "ControlNet present but could not resolve control_net_name / "
-                "source image (ControlNetLoader → optional Canny/DWPose/Depth "
-                "preprocessor → LoadImage chains are supported)."
+                "source image (ControlNetLoader → optional preprocessor → "
+                "LoadImage chains are supported)."
             ),
         )
-    if controlnet_info is not None and family not in ("sdxl", "flux", "qwen"):
+    controlnets = controlnet_stack or []
+    if controlnets and family not in ("sdxl", "flux", "qwen"):
         return ClassifyResult(
             supported=False,
             family=family,
             reason="Native ControlNet is supported for SDXL, Flux, and Qwen graphs only.",
         )
     if (
-        controlnet_info is not None
+        controlnets
         and family == "flux"
         and _is_flux_klein(clip_type, unet)
     ):
@@ -725,7 +762,16 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
         )
-    if controlnet_info is not None and img2img_mode != "txt2img":
+    if len(controlnets) > 1 and family != "sdxl":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Stacked ControlNetApply chains compile natively for SDXL only — "
+                "use ComfyUI for Flux/Qwen multi-ControlNet."
+            ),
+        )
+    if controlnets and img2img_mode != "txt2img":
         # SDXL + classic Flux: ControlNet img2img/inpaint pipelines.
         # Qwen: mask-channel ControlNet-Inpainting via
         # QwenImageControlNetInpaintPipeline (inpaint only — no Img2Img CN).
@@ -741,9 +787,11 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
                     "for this family/mode yet — use ComfyUI."
                 ),
             )
-    controlnet_name, controlnet_image, controlnet_preprocessor, controlnet_strength = (
-        controlnet_info if controlnet_info is not None else (None, None, "none", 1.0)
-    )
+    primary = controlnets[0] if controlnets else None
+    controlnet_name = primary.name if primary else None
+    controlnet_image = primary.image if primary else None
+    controlnet_preprocessor = primary.preprocessor if primary else "none"
+    controlnet_strength = primary.strength if primary else 1.0
     upscale_model, output_scale, output_blur_radius = _trace_output_post(nodes)
     ip_adapter_info = _trace_ip_adapter(nodes)
     has_ipadapter_node = any(
@@ -795,6 +843,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         init_image=init_image,
         mask_image=mask_image,
         img2img_mode=img2img_mode if denoise < 0.999 else "txt2img",
+        controlnets=list(controlnets),
         controlnet=controlnet_name,
         controlnet_image=controlnet_image,
         controlnet_preprocessor=controlnet_preprocessor,

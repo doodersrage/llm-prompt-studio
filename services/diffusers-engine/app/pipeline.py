@@ -2088,6 +2088,7 @@ class PipelineHolder:
         controlnet_image_path: str | None = None,
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
+        controlnet_stack: list[dict[str, Any]] | None = None,
         ip_adapter_path: str | None = None,
         ip_adapter_image_path: str | None = None,
         ip_adapter_strength: float = 0.5,
@@ -2213,9 +2214,17 @@ class PipelineHolder:
 
         strength = max(0.01, min(1.0, float(denoise)))
         use_img2img = init_image_path is not None and strength < 0.999
-        use_controlnet = (
-            controlnet_path is not None and controlnet_image_path is not None
-        )
+        cn_stack: list[dict[str, Any]] = list(controlnet_stack or [])
+        if not cn_stack and controlnet_path and controlnet_image_path:
+            cn_stack = [
+                {
+                    "path": controlnet_path,
+                    "image_path": controlnet_image_path,
+                    "preprocessor": controlnet_preprocessor,
+                    "strength": controlnet_strength,
+                }
+            ]
+        use_controlnet = bool(cn_stack)
         use_ip_adapter = ip_adapter_image_path is not None
         use_inpaint = (
             use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
@@ -2314,39 +2323,56 @@ class PipelineHolder:
                 apply_controlnet_preprocess,
                 union_control_mode,
             )
+            from diffusers import ControlNetModel, MultiControlNetModel
 
-            control_image = Image.open(controlnet_image_path).convert("RGB")
-            control_image = apply_controlnet_preprocess(
-                control_image, controlnet_preprocessor
-            )
-            control_image = control_image.resize(
-                (gen_width, gen_height), Image.Resampling.LANCZOS
-            )
-            init = None
-            mask = None
-            if use_img2img:
-                init = Image.open(init_image_path).convert("RGB")
-                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
-            if use_inpaint:
-                mask = Image.open(mask_image_path).convert("L")
-                mask = mask.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+            control_images: list[Image.Image] = []
+            strengths: list[float] = []
+            preprocessors: list[str] = []
+            for entry in cn_stack:
+                img = Image.open(entry["image_path"]).convert("RGB")
+                img = apply_controlnet_preprocess(
+                    img, str(entry.get("preprocessor") or "none")
+                )
+                img = img.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+                control_images.append(img)
+                strengths.append(float(entry.get("strength", 1.0)))
+                preprocessors.append(str(entry.get("preprocessor") or "none"))
 
-            # xinsir-style "Union" SDXL ControlNets need ControlNetUnionModel +
-            # the Union pipeline + an explicit control_mode.
-            is_union = sdxl_controlnet_is_union(controlnet_path)
-            cn_key = f"sdxl-{'union' if is_union else 'plain'}:{controlnet_path}"
+            union_flags = [
+                sdxl_controlnet_is_union(str(entry["path"])) for entry in cn_stack
+            ]
+            if any(union_flags) and not all(union_flags):
+                raise RuntimeError(
+                    "Mixed Union and plain ControlNet stack is not supported — use ComfyUI."
+                )
+            is_union = bool(union_flags) and all(union_flags)
+            if is_union:
+                resolved = {str(Path(e["path"]).resolve()) for e in cn_stack}
+                if len(resolved) > 1:
+                    raise RuntimeError(
+                        "Stacked Union ControlNets must share one checkpoint file — "
+                        "use ComfyUI for different Union weights."
+                    )
+
+            is_multi = len(cn_stack) > 1
+            paths_key = "|".join(str(Path(e["path"]).resolve()) for e in cn_stack)
+            cn_key = (
+                f"sdxl-{'union' if is_union else 'plain'}:n{len(cn_stack)}:{paths_key}"
+            )
             if self._controlnet_key != cn_key or self._controlnet_model is None:
+                label = "Union " if is_union else ""
+                names = "+".join(Path(e["path"]).name for e in cn_stack)
                 print(
-                    f"[diffusers] loading {'Union ' if is_union else ''}ControlNet "
-                    f"{Path(controlnet_path).name}",
+                    f"[diffusers] loading {label}ControlNet stack ({len(cn_stack)}): {names}",
                     flush=True,
                 )
                 if is_union:
                     from diffusers import ControlNetUnionModel
 
+                    union_path = str(cn_stack[0]["path"])
                     try:
                         self._controlnet_model = ControlNetUnionModel.from_single_file(
-                            controlnet_path, torch_dtype=torch.float16,
+                            union_path, torch_dtype=torch.float16,
                         )
                     except Exception as exc:
                         print(
@@ -2357,19 +2383,32 @@ class PipelineHolder:
                         self._controlnet_model = _load_via_hub_config_local_weights(
                             ControlNetUnionModel,
                             "xinsir/controlnet-union-sdxl-1.0",
-                            controlnet_path,
+                            union_path,
                             torch.float16,
                         )
                 else:
-                    from diffusers import ControlNetModel
-
-                    self._controlnet_model = ControlNetModel.from_single_file(
-                        controlnet_path, torch_dtype=torch.float16,
+                    models = [
+                        ControlNetModel.from_single_file(
+                            str(entry["path"]), torch_dtype=torch.float16
+                        )
+                        for entry in cn_stack
+                    ]
+                    self._controlnet_model = (
+                        models[0] if len(models) == 1 else MultiControlNetModel(models)
                     )
                 self._controlnet_key = cn_key
 
             if not use_ip_adapter:
                 self._clear_sdxl_ip_adapter(pipe)
+
+            init = None
+            mask = None
+            if use_img2img:
+                init = Image.open(init_image_path).convert("RGB")
+                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+            if use_inpaint:
+                mask = Image.open(mask_image_path).convert("L")
+                mask = mask.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
 
             if use_inpaint:
                 if is_union:
@@ -2413,10 +2452,19 @@ class PipelineHolder:
                 )
             cn_pipe = self._place_compiled_pipe(cn_pipe, torch.float16)
 
+            scale_arg: float | list[float]
+            if is_union or is_multi:
+                scale_arg = strengths
+            else:
+                scale_arg = strengths[0]
+
+            def _control_maps(images: list[Image.Image]) -> Any:
+                if is_union or is_multi:
+                    return images
+                return images[0]
+
             cn_kwargs: dict[str, Any] = {
-                "controlnet_conditioning_scale": (
-                    [float(controlnet_strength)] if is_union else float(controlnet_strength)
-                ),
+                "controlnet_conditioning_scale": scale_arg,
                 "num_inference_steps": plan.steps,
                 "guidance_scale": plan.guidance_scale,
                 "generator": generator,
@@ -2425,9 +2473,7 @@ class PipelineHolder:
             if use_img2img:
                 cn_kwargs["image"] = init
                 cn_kwargs["strength"] = strength
-                cn_kwargs["control_image"] = (
-                    [control_image] if is_union else control_image
-                )
+                cn_kwargs["control_image"] = _control_maps(control_images)
                 if use_inpaint:
                     cn_kwargs["mask_image"] = mask
             else:
@@ -2435,13 +2481,13 @@ class PipelineHolder:
                 cn_kwargs["height"] = gen_height
                 cn_kwargs["output_type"] = "latent"
                 if is_union:
-                    cn_kwargs["control_image"] = [control_image]
+                    cn_kwargs["control_image"] = control_images
                 else:
-                    # Plain ControlNet txt2img uses ``image`` for the control map.
-                    cn_kwargs["image"] = control_image
+                    # Plain ControlNet txt2img uses ``image`` for the control map(s).
+                    cn_kwargs["image"] = _control_maps(control_images)
             if is_union:
                 cn_kwargs["control_mode"] = [
-                    union_control_mode(controlnet_preprocessor)
+                    union_control_mode(p) for p in preprocessors
                 ]
             cn_kwargs.update(encode_kwargs)
 
@@ -2461,8 +2507,8 @@ class PipelineHolder:
 
             mode_bits = [
                 "controlnet",
-                controlnet_preprocessor,
-                "union" if is_union else "plain",
+                "+".join(preprocessors),
+                "union" if is_union else ("multi" if is_multi else "plain"),
             ]
             if use_inpaint:
                 mode_bits.append("inpaint")
@@ -2470,11 +2516,12 @@ class PipelineHolder:
                 mode_bits.append("img2img")
             if use_ip_adapter:
                 mode_bits.append("ip-adapter")
+            cn_names = "+".join(Path(e["path"]).name for e in cn_stack)
             print(
                 f"[diffusers] compiled-sdxl {'+'.join(mode_bits)} "
-                f"model={path.name} cn={Path(controlnet_path).name} "
+                f"model={path.name} cn={cn_names} "
                 f"{gen_width}x{gen_height} steps={plan.steps} "
-                f"cfg={plan.guidance_scale} cn_strength={controlnet_strength:.2f}"
+                f"cfg={plan.guidance_scale} cn_strength={strengths}"
                 + (f" denoise={strength:.2f}" if use_img2img else "")
                 + (
                     f" ip={float(ip_adapter_strength):.2f}"
@@ -2493,12 +2540,15 @@ class PipelineHolder:
                 )
             except torch.cuda.OutOfMemoryError:
                 self._empty_cuda()
-                small = control_image.resize((768, 768), Image.Resampling.LANCZOS)
+                small_maps = [
+                    img.resize((768, 768), Image.Resampling.LANCZOS)
+                    for img in control_images
+                ]
                 if use_img2img:
                     cn_kwargs["image"] = init.resize(
                         (768, 768), Image.Resampling.LANCZOS
                     )
-                    cn_kwargs["control_image"] = [small] if is_union else small
+                    cn_kwargs["control_image"] = _control_maps(small_maps)
                     if use_inpaint and mask is not None:
                         cn_kwargs["mask_image"] = mask.resize(
                             (768, 768), Image.Resampling.LANCZOS
@@ -2507,9 +2557,9 @@ class PipelineHolder:
                     cn_kwargs["width"] = 768
                     cn_kwargs["height"] = 768
                     if is_union:
-                        cn_kwargs["control_image"] = [small]
+                        cn_kwargs["control_image"] = small_maps
                     else:
-                        cn_kwargs["image"] = small
+                        cn_kwargs["image"] = _control_maps(small_maps)
                 if use_ip_adapter:
                     ip_small = ip_image.resize((768, 768), Image.Resampling.LANCZOS)
                     cn_kwargs["ip_adapter_image_embeds"] = (

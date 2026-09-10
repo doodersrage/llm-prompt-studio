@@ -560,6 +560,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.controlnet_image, "source.png")
         self.assertEqual(result.compiled.controlnet_preprocessor, "canny")
         self.assertAlmostEqual(result.compiled.controlnet_strength, 0.8)
+        self.assertEqual(len(result.compiled.controlnets), 1)
         # Conditioning text must still resolve through the ControlNetApply pass-through.
         self.assertEqual(result.compiled.positive, "a glassblower")
         self.assertEqual(result.compiled.negative, "blurry")
@@ -640,6 +641,79 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertTrue(result.supported, result.reason)
         assert result.compiled is not None
         self.assertEqual(result.compiled.controlnet_preprocessor, "mlsd")
+
+    def test_compiles_sdxl_controlnet_stack(self) -> None:
+        graph = self._controlnet_graph(
+            _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
+        )
+        # Outer Apply stacks on the first ControlNetApplyAdvanced (node 33).
+        graph["40"] = {
+            "class_type": "ControlNetLoader",
+            "inputs": {"control_net_name": "control-depth-sdxl.safetensors"},
+        }
+        graph["41"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "depth-source.png"},
+        }
+        graph["42"] = {
+            "class_type": "DepthAnythingV2Preprocessor",
+            "inputs": {"image": ["41", 0]},
+        }
+        graph["43"] = {
+            "class_type": "ControlNetApplyAdvanced",
+            "inputs": {
+                "positive": ["33", 0],
+                "negative": ["33", 1],
+                "control_net": ["40", 0],
+                "image": ["42", 0],
+                "strength": 0.55,
+                "start_percent": 0.0,
+                "end_percent": 1.0,
+            },
+        }
+        graph["5"]["inputs"]["positive"] = ["43", 0]
+        graph["5"]["inputs"]["negative"] = ["43", 1]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(len(result.compiled.controlnets), 2)
+        # Outermost Apply first (depth), then canny.
+        self.assertEqual(result.compiled.controlnets[0].name, "control-depth-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnets[0].preprocessor, "depth")
+        self.assertAlmostEqual(result.compiled.controlnets[0].strength, 0.55)
+        self.assertEqual(result.compiled.controlnets[1].name, "control-canny-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnets[1].preprocessor, "canny")
+        # Scalars mirror the outermost (primary) entry.
+        self.assertEqual(result.compiled.controlnet, "control-depth-sdxl.safetensors")
+        self.assertEqual(result.compiled.controlnet_preprocessor, "depth")
+
+    def test_flux_controlnet_stack_unsupported(self) -> None:
+        graph = self._controlnet_graph(
+            _flux_graph(), positive_id="4", negative_id="5", ksampler_id="8",
+        )
+        graph["40"] = {
+            "class_type": "ControlNetLoader",
+            "inputs": {"control_net_name": "control-depth-sdxl.safetensors"},
+        }
+        graph["41"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "depth-source.png"},
+        }
+        graph["42"] = {
+            "class_type": "ControlNetApply",
+            "inputs": {
+                "positive": ["33", 0],
+                "negative": ["33", 1],
+                "control_net": ["40", 0],
+                "image": ["41", 0],
+                "strength": 0.5,
+            },
+        }
+        graph["8"]["inputs"]["positive"] = ["42", 0]
+        graph["8"]["inputs"]["negative"] = ["42", 1]
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("SDXL", result.reason)
 
     def test_compiles_flux_controlnet_canny(self) -> None:
         graph = self._controlnet_graph(

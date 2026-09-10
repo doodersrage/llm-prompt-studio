@@ -16,7 +16,12 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   still falls back to ComfyUI — no vetted pipeline for Klein. SDXL and classic
   Flux ControlNet combine with img2img/inpaint; Qwen plain Union CN is
   txt2img-only, while the InstantX ControlNet-Inpainting checkpoint runs
-  natively on inpaint graphs.
+  natively on inpaint graphs. **SDXL also compiles stacked ControlNetApply
+  chains** (Studio’s 2nd–4th control images): plain checkpoints use
+  `MultiControlNetModel`; multiple tasks on one xinsir Union file share a
+  single `ControlNetUnionModel` with list `control_image` / `control_mode`.
+  Mixed Union+plain or different Union files fall back to ComfyUI. Flux/Qwen
+  multi-ControlNet still uses ComfyUI.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra

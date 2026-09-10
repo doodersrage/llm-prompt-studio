@@ -84,16 +84,28 @@ def execute_compiled(
         for item in compiled.loras:
             path = _resolve_required(item.name, "loras")
             loras.append((path, item.strength))
-        controlnet_path = (
-            _resolve_required(compiled.controlnet, "controlnets")
-            if compiled.controlnet
-            else None
-        )
-        controlnet_image_path = (
-            _resolve_input_image(compiled.controlnet_image)
-            if compiled.controlnet_image
-            else None
-        )
+        controlnet_stack: list[dict[str, Any]] = []
+        for item in compiled.controlnets:
+            controlnet_stack.append(
+                {
+                    "path": _resolve_required(item.name, "controlnets"),
+                    "image_path": _resolve_input_image(item.image),
+                    "preprocessor": item.preprocessor,
+                    "strength": item.strength,
+                }
+            )
+        if not controlnet_stack and compiled.controlnet:
+            controlnet_stack.append(
+                {
+                    "path": _resolve_required(compiled.controlnet, "controlnets"),
+                    "image_path": _resolve_input_image(compiled.controlnet_image),
+                    "preprocessor": compiled.controlnet_preprocessor,
+                    "strength": compiled.controlnet_strength,
+                }
+            )
+        primary = controlnet_stack[0] if controlnet_stack else None
+        controlnet_path = primary["path"] if primary else None
+        controlnet_image_path = primary["image_path"] if primary else None
         ip_adapter_path = None
         if compiled.ip_adapter_model:
             ip_adapter_path = resolve_asset_file(
@@ -124,8 +136,13 @@ def execute_compiled(
             denoise=compiled.denoise,
             controlnet_path=controlnet_path,
             controlnet_image_path=controlnet_image_path,
-            controlnet_preprocessor=compiled.controlnet_preprocessor,
-            controlnet_strength=compiled.controlnet_strength,
+            controlnet_preprocessor=(
+                primary["preprocessor"] if primary else compiled.controlnet_preprocessor
+            ),
+            controlnet_strength=(
+                float(primary["strength"]) if primary else compiled.controlnet_strength
+            ),
+            controlnet_stack=controlnet_stack or None,
             ip_adapter_path=ip_adapter_path,
             ip_adapter_image_path=ip_adapter_image_path,
             ip_adapter_strength=compiled.ip_adapter_strength,
@@ -252,6 +269,15 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "controlnet_image": compiled.controlnet_image,
         "controlnet_preprocessor": compiled.controlnet_preprocessor,
         "controlnet_strength": compiled.controlnet_strength,
+        "controlnets": [
+            {
+                "name": item.name,
+                "image": item.image,
+                "preprocessor": item.preprocessor,
+                "strength": item.strength,
+            }
+            for item in compiled.controlnets
+        ],
         "upscale_model": compiled.upscale_model,
         "output_scale": compiled.output_scale,
         "output_blur_radius": compiled.output_blur_radius,
