@@ -276,6 +276,53 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.cfg, 1.0)
         self.assertEqual(result.compiled.positive, "flux prompt")
 
+    def test_compiles_flux_klein_reference_with_image_scale(self) -> None:
+        # Studio Compose: LoadImage → ImageScale → VAEEncode → ReferenceLatent.
+        graph = _flux_graph()
+        graph["2"]["inputs"]["type"] = "flux2"
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "figure1.png"}}
+        graph["21"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["20", 0],
+                "width": 1024,
+                "height": 1024,
+                "upscale_method": "lanczos",
+                "crop": "center",
+            },
+        }
+        graph["22"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["21", 0], "vae": ["3", 0]},
+        }
+        graph["23"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["4", 0], "latent": ["22", 0]},
+        }
+        graph["6"] = {
+            "class_type": "EmptyFlux2LatentImage",
+            "inputs": {"width": 1024, "height": 1024, "batch_size": 1},
+        }
+        graph["8"]["inputs"]["positive"] = ["23", 0]
+        graph["8"]["inputs"]["latent_image"] = ["6", 0]
+        graph["99"] = {"class_type": "Note", "inputs": {"text": "compose note"}}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.reference_images, ["figure1.png"])
+
+    def test_compiles_with_conditioning_zero_out_negative(self) -> None:
+        graph = _sdxl_graph()
+        graph["12"] = {
+            "class_type": "ConditioningZeroOut",
+            "inputs": {"conditioning": ["3", 0]},
+        }
+        graph["5"]["inputs"]["negative"] = ["12", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.negative, "")
+
     def test_compiles_qwen(self) -> None:
         result = compile_workflow(_qwen_graph())
         self.assertTrue(result.supported)

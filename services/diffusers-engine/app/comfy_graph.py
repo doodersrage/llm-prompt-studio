@@ -19,6 +19,14 @@ _LORA_OK = frozenset(
 _IMG2IMG_OK = frozenset({"LoadImage", "VAEEncode"})
 _INPAINT_OK = frozenset({"LoadImage", "LoadImageMask", "InpaintModelConditioning", "VAEEncode"})
 
+# Pre-encode / ref-path resize (Studio Compose: LoadImage → ImageScale → VAEEncode).
+# Passthrough for compile — Diffusers pipelines resize refs themselves; we only
+# need to walk through to the LoadImage filename.
+_IMAGE_SCALE_OK = frozenset({"ImageScale", "ResizeImage"})
+
+# Harmless / text-only wrappers that must not force a Comfy fallback.
+_PASSTHROUGH_OK = frozenset({"Note", "ConditioningZeroOut"})
+
 # Native ControlNet: SDXL, classic Flux (not Flux2-Klein), and Qwen (plain
 # Union/Canny checkpoints only, not the mask-conditioned Inpainting variant —
 # see safetensors_peek.qwen_controlnet_expects_mask). Canny is opencv-local;
@@ -124,6 +132,8 @@ _SDXL_OK = frozenset(
         *_POST_OK,
         *_IPADAPTER_OK,
         *_INSTANTID_OK,
+        *_IMAGE_SCALE_OK,
+        *_PASSTHROUGH_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -144,6 +154,8 @@ _FLUX_OK = frozenset(
         *_INPAINT_OK,
         *_CONTROLNET_OK,
         *_POST_OK,
+        *_IMAGE_SCALE_OK,
+        *_PASSTHROUGH_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         # Studio Flux scaffolds use EmptySD3LatentImage (non-Klein).
@@ -173,6 +185,8 @@ _QWEN_OK = frozenset(
         *_CONTROLNET_OK,
         *_POST_OK,
         *_QWEN_EDIT_OK,
+        *_IMAGE_SCALE_OK,
+        *_PASSTHROUGH_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "EmptySD3LatentImage",
@@ -425,15 +439,55 @@ def _collect_loras(nodes: dict[str, dict[str, Any]]) -> list[CompiledLora]:
 def _resolve_load_image_name(
     nodes: dict[str, dict[str, Any]], node_id: str | None
 ) -> str | None:
-    if not node_id:
+    """Resolve a LoadImage filename, walking ImageScale / ResizeImage wrappers."""
+    seen: set[str] = set()
+    current_id = node_id
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = nodes.get(current_id)
+        if not node:
+            return None
+        ctype = node["class_type"]
+        if ctype == "LoadImage":
+            name = _as_str(node["inputs"].get("image")).strip()
+            if not name or name.startswith("{{"):
+                return None
+            return name
+        if ctype in _IMAGE_SCALE_OK:
+            current_id = _link_id(node["inputs"].get("image"))
+            continue
         return None
-    node = nodes.get(node_id)
-    if not node or node["class_type"] != "LoadImage":
-        return None
-    name = _as_str(node["inputs"].get("image")).strip()
-    if not name or name.startswith("{{"):
-        return None
-    return name
+    return None
+
+
+def _resolve_conditioning_text(
+    nodes: dict[str, dict[str, Any]], node_id: str | None, branch: str
+) -> str:
+    """Follow CLIPTextEncode / Qwen Edit encode text through ControlNetApply."""
+    node = nodes.get(node_id or "")
+    if not node:
+        return ""
+    ctype = node["class_type"]
+    if ctype == "CLIPTextEncode":
+        return _as_str(node["inputs"].get("text"))
+    if ctype in _QWEN_EDIT_OK:
+        return _as_str(node["inputs"].get("prompt"))
+    if ctype == "ConditioningZeroOut":
+        # Boogu Turbo / empty-negative — Diffusers gets "".
+        return ""
+    if ctype == "ReferenceLatent":
+        inner_id = _link_id(node["inputs"].get("conditioning"))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
+    if ctype == "FluxGuidance":
+        inner_id = _link_id(node["inputs"].get("conditioning"))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
+    if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
+        inner_id = _link_id(node["inputs"].get(branch))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
+    if ctype == "InpaintModelConditioning":
+        inner_id = _link_id(node["inputs"].get(branch))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
+    return ""
 
 
 def _trace_img2img_assets(
@@ -466,33 +520,6 @@ def _trace_img2img_assets(
         return None, None, "txt2img"
 
     return None, None, "txt2img"
-
-
-def _resolve_conditioning_text(
-    nodes: dict[str, dict[str, Any]], node_id: str | None, branch: str
-) -> str:
-    """Follow CLIPTextEncode / Qwen Edit encode text through ControlNetApply."""
-    node = nodes.get(node_id or "")
-    if not node:
-        return ""
-    ctype = node["class_type"]
-    if ctype == "CLIPTextEncode":
-        return _as_str(node["inputs"].get("text"))
-    if ctype in _QWEN_EDIT_OK:
-        return _as_str(node["inputs"].get("prompt"))
-    if ctype == "ReferenceLatent":
-        inner_id = _link_id(node["inputs"].get("conditioning"))
-        return _resolve_conditioning_text(nodes, inner_id, branch)
-    if ctype == "FluxGuidance":
-        inner_id = _link_id(node["inputs"].get("conditioning"))
-        return _resolve_conditioning_text(nodes, inner_id, branch)
-    if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
-        inner_id = _link_id(node["inputs"].get(branch))
-        return _resolve_conditioning_text(nodes, inner_id, branch)
-    if ctype == "InpaintModelConditioning":
-        inner_id = _link_id(node["inputs"].get(branch))
-        return _resolve_conditioning_text(nodes, inner_id, branch)
-    return ""
 
 
 def _trace_flux_guidance(

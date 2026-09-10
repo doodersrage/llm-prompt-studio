@@ -91,6 +91,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 - **FLUX.1 `FluxGuidance` + `EmptySD3LatentImage` are native** (Studio UltraReal /
   Flux scaffolds). `FluxGuidance.guidance` maps to Diffusers `guidance_scale`;
   KSampler.cfg stays the Comfy-side true-CFG knob (usually 1).
+- **`ImageScale` / `ResizeImage` on ref paths are allowed** (Studio Compose
+  LoadImage → scale → VAEEncode → ReferenceLatent). Filename resolution walks
+  through the scale node; Diffusers still does its own ref resize. `Note` and
+  `ConditioningZeroOut` are passthrough (zero-out → empty negative).
 - **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
   `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
   `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Studio Compose/Refine
