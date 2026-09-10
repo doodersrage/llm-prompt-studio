@@ -3340,6 +3340,12 @@ class PipelineHolder:
             pipe.tokenizer = self._load_flux1_clip_tokenizer()
         if getattr(pipe, "tokenizer_2", None) is None:
             pipe.tokenizer_2 = self._load_flux1_t5_tokenizer()
+        try:
+            if getattr(pipe, "tokenizer", None) is not None:
+                pipe.tokenizer.model_max_length = 77
+            pipe.tokenizer_max_length = 77
+        except Exception:
+            pass
         print(
             f"[diffusers] Flux.1 assembled transformer={unet_label} "
             f"clip_l={'drop-in' if text_encoder is not None else 'hub'} "
@@ -3362,6 +3368,9 @@ class PipelineHolder:
             if (path / "vocab.json").is_file():
                 tok = CLIPTokenizer.from_pretrained(str(path), local_files_only=True)
                 if getattr(tok, "vocab_size", 0) >= 40000:
+                    # Comfy's sd1_tokenizer ships model_max_length=8192; Flux
+                    # CLIP-L position embeds are 77 — Diffusers reads this field.
+                    tok.model_max_length = 77
                     print(f"[diffusers] Flux CLIP tokenizer from {path}", flush=True)
                     return tok
         for local_only in (True, False):
@@ -3371,6 +3380,7 @@ class PipelineHolder:
                     local_files_only=local_only,
                 )
                 if getattr(tok, "vocab_size", 0) >= 40000:
+                    tok.model_max_length = 77
                     return tok
             except Exception:
                 continue
@@ -3446,6 +3456,10 @@ class PipelineHolder:
             tokenizer_2=self._load_flux1_t5_tokenizer(),
             transformer=transformer,
         )
+        try:
+            pipe.tokenizer_max_length = 77
+        except Exception:
+            pass
         try:
             pipe.set_progress_bar_config(disable=True)
         except Exception:

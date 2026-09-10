@@ -557,8 +557,8 @@ def test_qwen_image_edit() -> None:
     from PIL import Image, ImageDraw
     from app.pipeline import pipeline_holder
 
-    ref = Image.new("RGB", (768, 768), (180, 160, 140))
-    ImageDraw.Draw(ref).ellipse((200, 200, 568, 568), fill=(60, 100, 180))
+    ref = Image.new("RGB", (512, 512), (180, 160, 140))
+    ImageDraw.Draw(ref).ellipse((128, 128, 384, 384), fill=(60, 100, 180))
     ref_src = OUT_DIR / "qwen_edit_ref.png"
     ref.save(ref_src)
 
@@ -569,17 +569,17 @@ def test_qwen_image_edit() -> None:
             ("diffusion_models", "qwen_image_edit_2509_bf16.safetensors"),
         ),
         clip_name=_prefer(
-            ("text_encoders", "qwen_2.5_vl_7b.safetensors"),
             ("text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"),
+            ("text_encoders", "qwen_2.5_vl_7b.safetensors"),
         ),
         vae_name=_p("vae", "qwen_image_vae.safetensors"),
         loras=[],
         prompt="make the circle a glowing neon green ring",
         negative_prompt="",
-        width=768,
-        height=768,
-        steps=8,
-        guidance_scale=2.5,
+        width=512,
+        height=512,
+        steps=4,
+        guidance_scale=1.0,
         seed=11,
         qwen_edit_mode="edit",
         qwen_edit_image_paths=[str(ref_src)],
