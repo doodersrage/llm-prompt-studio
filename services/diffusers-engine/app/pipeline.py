@@ -583,6 +583,7 @@ class PipelineHolder:
         self._controlnet_key: str | None = None
         self._controlnet_model: Any = None
         self._ip_adapter_key: str | None = None
+        self._instantid_adapter_key: str | None = None
 
     def describe(self) -> tuple[str, str, bool]:
         if MOCK_MODE:
@@ -1197,6 +1198,7 @@ class PipelineHolder:
         self._controlnet_key = None
         self._controlnet_model = None
         self._ip_adapter_key = None
+        self._instantid_adapter_key = None
         if pipe is not None:
             try:
                 self._park_pipe(pipe)
@@ -2092,6 +2094,10 @@ class PipelineHolder:
         ip_adapter_path: str | None = None,
         ip_adapter_image_path: str | None = None,
         ip_adapter_strength: float = 0.5,
+        instantid_path: str | None = None,
+        instantid_image_path: str | None = None,
+        instantid_strength: float = 0.8,
+        instantid_controlnet_path: str | None = None,
     ) -> Image.Image:
         """
         Native SDXL from a Comfy graph — same quality stack as txt2img
@@ -2099,6 +2105,8 @@ class PipelineHolder:
 
         Supported combinations (SDXL):
         - txt2img / img2img / inpaint ± ControlNet ± IP-Adapter
+        - InstantID identity lock (txt2img; mutually exclusive with IP-Adapter /
+          extra ControlNetApply stacks)
         """
         import torch
         from diffusers import (
@@ -2226,9 +2234,127 @@ class PipelineHolder:
             ]
         use_controlnet = bool(cn_stack)
         use_ip_adapter = ip_adapter_image_path is not None
+        use_instantid = (
+            instantid_path is not None
+            and instantid_image_path is not None
+            and instantid_controlnet_path is not None
+        )
         use_inpaint = (
             use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
         )
+
+        if use_instantid:
+            if use_img2img:
+                raise RuntimeError(
+                    "InstantID + img2img/inpaint is not supported yet — use "
+                    "txt2img InstantID or ComfyUI."
+                )
+            if use_controlnet or use_ip_adapter:
+                raise RuntimeError(
+                    "InstantID cannot combine with ControlNetApply / IP-Adapter "
+                    "in the Diffusers engine — use one identity path."
+                )
+            from diffusers import ControlNetModel
+            from app.pipeline_stable_diffusion_xl_instantid import (
+                StableDiffusionXLInstantIDPipeline,
+            )
+            from app.instantid_face import extract_face_embedding_and_kps
+
+            face_image = Image.open(instantid_image_path).convert("RGB")
+            face_emb, face_kps = extract_face_embedding_and_kps(face_image)
+            face_kps = face_kps.resize(
+                (gen_width, gen_height), Image.Resampling.LANCZOS
+            )
+
+            cn_key = f"instantid-cn:{instantid_controlnet_path}"
+            if self._controlnet_key != cn_key or self._controlnet_model is None:
+                print(
+                    f"[diffusers] loading InstantID IdentityNet "
+                    f"{Path(instantid_controlnet_path).name}",
+                    flush=True,
+                )
+                cn_source = Path(instantid_controlnet_path)
+                if cn_source.is_dir():
+                    self._controlnet_model = ControlNetModel.from_pretrained(
+                        str(cn_source), torch_dtype=torch.float16
+                    )
+                else:
+                    self._controlnet_model = ControlNetModel.from_single_file(
+                        str(cn_source), torch_dtype=torch.float16
+                    )
+                self._controlnet_key = cn_key
+
+            self._clear_sdxl_ip_adapter(pipe)
+            iid_pipe = StableDiffusionXLInstantIDPipeline.from_pipe(
+                pipe, controlnet=self._controlnet_model
+            )
+            iid_key = f"instantid-adapter:{instantid_path}"
+            if getattr(self, "_instantid_adapter_key", None) != iid_key:
+                print(
+                    f"[diffusers] loading InstantID adapter "
+                    f"{Path(instantid_path).name}",
+                    flush=True,
+                )
+                iid_pipe.load_ip_adapter_instantid(instantid_path)
+                self._instantid_adapter_key = iid_key
+            else:
+                # from_pipe may not keep proj weights — reload when key matches
+                # but pipeline is fresh.
+                if not hasattr(iid_pipe, "image_proj_model"):
+                    iid_pipe.load_ip_adapter_instantid(instantid_path)
+
+            strength = float(instantid_strength)
+            iid_pipe.set_ip_adapter_scale(strength)
+            iid_pipe = self._place_compiled_pipe(iid_pipe, torch.float16)
+
+            import torch as _torch
+
+            emb = _torch.from_numpy(face_emb).to(device=device_for_gen, dtype=_torch.float16)
+            if emb.ndim == 1:
+                emb = emb.unsqueeze(0)
+
+            iid_kwargs: dict[str, Any] = {
+                "image_embeds": emb,
+                "image": face_kps,
+                "controlnet_conditioning_scale": strength,
+                "num_inference_steps": plan.steps,
+                "guidance_scale": plan.guidance_scale,
+                "generator": generator,
+                "guidance_rescale": 0.7,
+                "width": gen_width,
+                "height": gen_height,
+                "output_type": "latent",
+            }
+            iid_kwargs.update(encode_kwargs)
+            print(
+                f"[diffusers] compiled-sdxl instantid "
+                f"model={path.name} adapter={Path(instantid_path).name} "
+                f"{gen_width}x{gen_height} steps={plan.steps} "
+                f"cfg={plan.guidance_scale} strength={strength:.2f}",
+                flush=True,
+            )
+            try:
+                with _silence_model_warnings():
+                    result = iid_pipe(**iid_kwargs)
+                image = self._decode_latents_fp32(iid_pipe, result.images)
+            except torch.cuda.OutOfMemoryError:
+                self._empty_cuda()
+                iid_kwargs["width"] = 768
+                iid_kwargs["height"] = 768
+                iid_kwargs["image"] = face_kps.resize(
+                    (768, 768), Image.Resampling.LANCZOS
+                )
+                iid_kwargs["generator"] = torch.Generator(
+                    device=device_for_gen
+                ).manual_seed(int(seed) & 0xFFFFFFFF)
+                with _silence_model_warnings():
+                    result = iid_pipe(**iid_kwargs)
+                image = self._decode_latents_fp32(iid_pipe, result.images)
+            finally:
+                self._empty_cuda()
+            if on_step:
+                on_step(plan.steps, plan.steps)
+            return image
 
         if use_img2img and not use_controlnet:
             from diffusers import (

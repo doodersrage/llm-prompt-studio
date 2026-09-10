@@ -118,6 +118,41 @@ def execute_compiled(
             if compiled.ip_adapter_image
             else None
         )
+        instantid_path = None
+        if compiled.instantid_image:
+            instantid_path = resolve_asset_file(
+                compiled.instantid_model or "ip-adapter.bin",
+                "instantid",
+                "ipadapters",
+            )
+            if instantid_path is None:
+                raise FileNotFoundError(
+                    "InstantID ip-adapter.bin not found — place InstantX "
+                    "InstantID/ip-adapter.bin under models/instantid or "
+                    "services/diffusers-engine/instantid/."
+                )
+            instantid_path = str(instantid_path)
+        instantid_image_path = (
+            _resolve_input_image(compiled.instantid_image)
+            if compiled.instantid_image
+            else None
+        )
+        instantid_controlnet_path = None
+        if compiled.instantid_image:
+            cn_name = compiled.instantid_controlnet or "InstantID-ControlNet"
+            instantid_controlnet_path = resolve_asset_file(cn_name, "controlnets")
+            if instantid_controlnet_path is None:
+                # Diffusers-dir name from hub drop-in.
+                instantid_controlnet_path = resolve_asset_file(
+                    "InstantID-ControlNet", "controlnets"
+                )
+            if instantid_controlnet_path is None:
+                raise FileNotFoundError(
+                    "InstantID IdentityNet ControlNet not found — place "
+                    "InstantX InstantID ControlNetModel under "
+                    "controlnets/InstantID-ControlNet/."
+                )
+            instantid_controlnet_path = str(instantid_controlnet_path)
         image = pipeline_holder.generate_compiled_sdxl(
             checkpoint_path=ckpt,
             vae_name=compiled.vae,
@@ -146,6 +181,10 @@ def execute_compiled(
             ip_adapter_path=ip_adapter_path,
             ip_adapter_image_path=ip_adapter_image_path,
             ip_adapter_strength=compiled.ip_adapter_strength,
+            instantid_path=instantid_path,
+            instantid_image_path=instantid_image_path,
+            instantid_strength=compiled.instantid_strength,
+            instantid_controlnet_path=instantid_controlnet_path,
         )
         return _apply_output_post(compiled, image)
 
@@ -318,4 +357,8 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "ip_adapter_model": compiled.ip_adapter_model,
         "ip_adapter_image": compiled.ip_adapter_image,
         "ip_adapter_strength": compiled.ip_adapter_strength,
+        "instantid_model": compiled.instantid_model,
+        "instantid_image": compiled.instantid_image,
+        "instantid_strength": compiled.instantid_strength,
+        "instantid_controlnet": compiled.instantid_controlnet,
     }

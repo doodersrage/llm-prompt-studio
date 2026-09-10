@@ -11,3 +11,7 @@ checkpoints/*
 !checkpoints/.gitkeep
 controlnets/*
 !controlnets/.gitkeep
+instantid/*
+!instantid/.gitkeep
+ipadapters/*
+!ipadapters/.gitkeep

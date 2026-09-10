@@ -42,11 +42,27 @@ def _iter_weight_files(root: Path) -> list[Path]:
     out: list[Path] = []
     try:
         for child in root.iterdir():
-            if _looks_like_weight_file(child) or _is_diffusers_dir(child):
+            if (
+                _looks_like_weight_file(child)
+                or _is_diffusers_dir(child)
+                or _is_controlnet_dir(child)
+            ):
                 out.append(child)
     except OSError:
         pass
     return out
+
+
+def _is_controlnet_dir(path: Path) -> bool:
+    """Diffusers ControlNet folder (config.json + weights, no model_index.json)."""
+    if not path.is_dir():
+        return False
+    if not (path / "config.json").is_file():
+        return False
+    return any(
+        child.is_file() and child.suffix.lower() in (".safetensors", ".bin", ".pt")
+        for child in path.iterdir()
+    )
 
 
 def _infer_asset_family(name: str) -> str:
@@ -65,7 +81,12 @@ def _infer_asset_family(name: str) -> str:
 def _is_picker_weight(name: str, *, bucket: str) -> bool:
     """Skip obvious non-base weights from Studio pickers."""
     token = _normalize_token(name)
-    if bucket not in ("controlnets", "ipadapters", "upscale_models") and any(
+    if bucket not in (
+        "controlnets",
+        "ipadapters",
+        "instantid",
+        "upscale_models",
+    ) and any(
         n in token for n in ("lora", "controlnet", "ipadapter", "embedding")
     ):
         return False
@@ -84,7 +105,11 @@ def _list_bucket(bucket: str, roots: list[Path], *, family_fn) -> list[AssetFile
         for child in _iter_weight_files(root):
             if not _is_picker_weight(child.name, bucket=bucket):
                 continue
-            kind = "diffusers_dir" if _is_diffusers_dir(child) else "single_file"
+            kind = (
+                "diffusers_dir"
+                if (_is_diffusers_dir(child) or _is_controlnet_dir(child))
+                else "single_file"
+            )
             entry = AssetFile(
                 id=child.name,
                 label=child.stem.replace("_", " ") if child.is_file() else child.name,
@@ -176,6 +201,16 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         )
         if p is not None
     ]
+    instantid_roots = [
+        p
+        for p in (
+            _comfy_subdir("models", "instantid"),
+            _service_dir("instantid"),
+            _comfy_subdir("models", "ipadapter"),
+            _service_dir("ipadapters"),
+        )
+        if p is not None
+    ]
 
     return {
         "checkpoints": _list_bucket(
@@ -199,6 +234,9 @@ def list_asset_inventory() -> dict[str, list[AssetFile]]:
         ),
         "ipadapters": _list_bucket(
             "ipadapters", ipadapter_roots, family_fn=lambda n: "other"
+        ),
+        "instantid": _list_bucket(
+            "instantid", instantid_roots, family_fn=lambda n: "other"
         ),
     }
 

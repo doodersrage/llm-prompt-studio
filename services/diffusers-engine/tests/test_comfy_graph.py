@@ -528,6 +528,78 @@ class ComfyGraphTests(unittest.TestCase):
             or "SDXL" in result.reason
         )
 
+    def test_compiles_sdxl_instantid(self) -> None:
+        graph = _sdxl_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "InstantIDFaceAnalysis",
+            "inputs": {"provider": "CUDA"},
+        }
+        graph["52"] = {
+            "class_type": "InstantIDModelLoader",
+            "inputs": {"instantid_file": "ip-adapter.bin"},
+        }
+        graph["53"] = {
+            "class_type": "ApplyInstantID",
+            "inputs": {
+                "model": ["1", 0],
+                "instantid": ["52", 0],
+                "insightface": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.8,
+                "start_at": 0.0,
+                "end_at": 1.0,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["53", 0]
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.instantid_model, "ip-adapter.bin")
+        self.assertEqual(result.compiled.instantid_image, "face-ref.png")
+        self.assertAlmostEqual(result.compiled.instantid_strength, 0.8)
+        self.assertIsNone(result.compiled.instantid_controlnet)
+
+    def test_instantid_with_ip_adapter_unsupported(self) -> None:
+        graph = _sdxl_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "InstantIDModelLoader",
+            "inputs": {"instantid_file": "ip-adapter.bin"},
+        }
+        graph["52"] = {
+            "class_type": "ApplyInstantID",
+            "inputs": {
+                "model": ["1", 0],
+                "instantid": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.8,
+            },
+        }
+        graph["60"] = {
+            "class_type": "IPAdapterModelLoader",
+            "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+        }
+        graph["61"] = {
+            "class_type": "IPAdapterAdvanced",
+            "inputs": {
+                "model": ["52", 0],
+                "ipadapter": ["60", 0],
+                "image": ["50", 0],
+                "weight": 0.5,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["61", 0]
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("InstantID", result.reason)
+
     def test_compiles_sdxl_with_upscale_and_scale_by(self) -> None:
         graph = _sdxl_graph()
         graph["40"] = {

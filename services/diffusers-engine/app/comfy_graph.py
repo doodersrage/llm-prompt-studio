@@ -95,6 +95,16 @@ _IPADAPTER_OK = frozenset(
     }
 )
 
+# SDXL InstantID identity lock (InsightFace + IdentityNet ControlNet + ip-adapter.bin).
+_INSTANTID_OK = frozenset(
+    {
+        "InstantIDModelLoader",
+        "InstantIDFaceAnalysis",
+        "ApplyInstantID",
+        "ApplyInstantIDAdvanced",
+    }
+)
+
 _SDXL_OK = frozenset(
     {
         "CheckpointLoaderSimple",
@@ -106,6 +116,7 @@ _SDXL_OK = frozenset(
         *_CONTROLNET_OK,
         *_POST_OK,
         *_IPADAPTER_OK,
+        *_INSTANTID_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "KSampler",
@@ -159,11 +170,8 @@ _QWEN_OK = frozenset(
 _ALWAYS_UNSUPPORTED = frozenset(
     {
         "DiffControlNetLoader",
-        # InstantID / PuLID stay Comfy-only (InsightFace + ControlNet / Flux hooks).
-        # SDXL IP-Adapter is native — see _IPADAPTER_OK.
-        "InstantIDModelLoader",
-        "ApplyInstantID",
-        "InstantIDFaceAnalysis",
+        # PuLID stays Comfy-only (EVA-CLIP + Flux attention hooks).
+        # InstantID is native for SDXL — see _INSTANTID_OK.
         "PulidModelLoader",
         "PulidEvaClipLoader",
         "ApplyPulid",
@@ -252,6 +260,11 @@ class CompiledWorkflow:
     ip_adapter_model: str | None = None
     ip_adapter_image: str | None = None
     ip_adapter_strength: float = 0.5
+    # SDXL InstantID identity lock (InstantIDModelLoader → ApplyInstantID).
+    instantid_model: str | None = None
+    instantid_image: str | None = None
+    instantid_strength: float = 0.8
+    instantid_controlnet: str | None = None
 
 
 @dataclass(frozen=True)
@@ -607,6 +620,57 @@ def _trace_ip_adapter(
     return model_name, image_name, strength
 
 
+def _trace_instantid(
+    nodes: dict[str, dict[str, Any]],
+) -> tuple[str | None, str, float, str | None] | None:
+    """Find ApplyInstantID(+Advanced) + loader + face LoadImage (SDXL).
+
+    Returns (instantid_file | None, image, strength, controlnet_name | None).
+    ``instantid_file`` may be None when the loader token is unresolved — caller
+    should default to hub/drop-in ``ip-adapter.bin``.
+    """
+    apply_node = next(
+        (
+            n
+            for n in nodes.values()
+            if n["class_type"] in ("ApplyInstantID", "ApplyInstantIDAdvanced")
+        ),
+        None,
+    )
+    if apply_node is None:
+        if not any(
+            n["class_type"] in ("InstantIDModelLoader", "InstantIDFaceAnalysis")
+            for n in nodes.values()
+        ):
+            return None
+        return None
+
+    inputs = apply_node["inputs"]
+    loader = nodes.get(_link_id(inputs.get("instantid")) or "", {})
+    model_name: str | None = None
+    if loader.get("class_type") == "InstantIDModelLoader":
+        model_name = _as_str(loader["inputs"].get("instantid_file")).strip() or None
+        if model_name and model_name.startswith("{{"):
+            model_name = None
+
+    image_id = _link_id(inputs.get("image"))
+    image_name = _resolve_load_image_name(nodes, image_id)
+    if not image_name:
+        return None
+
+    strength = _as_float(inputs.get("weight", inputs.get("ip_weight")), 0.8)
+    strength = max(0.0, min(2.0, strength))
+
+    controlnet_name: str | None = None
+    cn_loader = nodes.get(_link_id(inputs.get("control_net")) or "", {})
+    if cn_loader.get("class_type") == "ControlNetLoader":
+        controlnet_name = _as_str(cn_loader["inputs"].get("control_net_name")).strip() or None
+        if controlnet_name and controlnet_name.startswith("{{"):
+            controlnet_name = None
+
+    return model_name, image_name, strength, controlnet_name
+
+
 def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     nodes = _nodes(graph)
     if not nodes:
@@ -813,9 +877,49 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason="Native IP-Adapter identity lock is SDXL-only — use ComfyUI for Flux/Qwen.",
         )
+
+    instantid_info = _trace_instantid(nodes)
+    has_instantid_node = any(
+        n["class_type"] in _INSTANTID_OK for n in nodes.values()
+    )
+    if has_instantid_node and instantid_info is None:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "InstantID present but could not resolve a reference LoadImage "
+                "(InstantIDModelLoader → ApplyInstantID → LoadImage required)."
+            ),
+        )
+    if instantid_info is not None and family != "sdxl":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="Native InstantID is SDXL-only — use ComfyUI for Flux/Qwen.",
+        )
+    if instantid_info is not None and ip_adapter_info is not None:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason="InstantID and IP-Adapter cannot compile together — use one identity path.",
+        )
+    if instantid_info is not None and controlnets:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "InstantID already includes IdentityNet ControlNet — remove "
+                "extra ControlNetApply chains or use ComfyUI."
+            ),
+        )
     # SDXL IP-Adapter works with txt2img / img2img / inpaint (± ControlNet).
     ip_adapter_model, ip_adapter_image, ip_adapter_strength = (
         ip_adapter_info if ip_adapter_info is not None else (None, None, 0.5)
+    )
+    instantid_model, instantid_image, instantid_strength, instantid_controlnet = (
+        instantid_info
+        if instantid_info is not None
+        else (None, None, 0.8, None)
     )
 
     compiled = CompiledWorkflow(
@@ -854,6 +958,10 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         ip_adapter_model=ip_adapter_model,
         ip_adapter_image=ip_adapter_image,
         ip_adapter_strength=ip_adapter_strength,
+        instantid_model=instantid_model,
+        instantid_image=instantid_image,
+        instantid_strength=instantid_strength,
+        instantid_controlnet=instantid_controlnet,
     )
     return ClassifyResult(
         supported=True,

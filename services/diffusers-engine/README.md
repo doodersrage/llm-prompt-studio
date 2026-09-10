@@ -24,6 +24,13 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   stacks the same way via `FluxMultiControlNetModel` / InstantX Union multi-mode.
   Qwen plain Union/Canny stacks via `QwenImageMultiControlNetModel` (txt2img);
   InstantX mask-inpaint CN remains single-only.
+- **SDXL InstantID** compiles natively (`InstantIDModelLoader` →
+  `ApplyInstantID` / `ApplyInstantIDAdvanced` + InsightFace antelopev2).
+  Drop InstantX `ip-adapter.bin` under `instantid/` (or Comfy `models/instantid/`)
+  and IdentityNet under `controlnets/InstantID-ControlNet/` (diffusers folder with
+  `config.json` + weights). First face analysis may download antelopev2 into
+  `~/.insightface`. Mutually exclusive with IP-Adapter and extra ControlNetApply
+  stacks; txt2img-only for now. PuLID stays on ComfyUI.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra

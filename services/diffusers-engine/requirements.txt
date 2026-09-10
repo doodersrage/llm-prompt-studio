@@ -14,5 +14,7 @@ torchvision>=0.17.0
 opencv-python-headless>=4.9.0  # ControlNet Canny preprocessing
 controlnet-aux>=0.0.9  # ControlNet OpenPose / depth / lineart / softedge / normal / MLSD
 spandrel>=0.4.0  # Comfy UpscaleModelLoader / ImageUpscaleWithModel parity
+insightface>=0.7.3  # InstantID face analysis (antelopev2)
+onnxruntime>=1.16.0  # InsightFace ONNX runtime (CPU; GPU optional via onnxruntime-gpu)
 
 
