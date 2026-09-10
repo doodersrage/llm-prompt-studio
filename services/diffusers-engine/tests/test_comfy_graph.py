@@ -619,7 +619,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertFalse(result.supported)
         self.assertIn("Klein", result.reason)
 
-    def test_controlnet_with_img2img_unsupported_for_inpaint(self) -> None:
+    def test_compiles_sdxl_controlnet_inpaint(self) -> None:
         graph = self._controlnet_graph(
             _sdxl_graph(), positive_id="2", negative_id="3", ksampler_id="5",
         )
@@ -641,8 +641,11 @@ class ComfyGraphTests(unittest.TestCase):
         graph["5"]["inputs"]["latent_image"] = ["22", 2]
         graph["5"]["inputs"]["denoise"] = 0.6
         result = compile_workflow(graph)
-        self.assertFalse(result.supported)
-        self.assertIn("inpaint", result.reason.lower())
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.controlnet, "control-canny-sdxl.safetensors")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
 
     def test_compiles_sdxl_controlnet_img2img(self) -> None:
         graph = self._controlnet_graph(
@@ -692,6 +695,43 @@ class ComfyGraphTests(unittest.TestCase):
             result.compiled.ip_adapter_model, "ip-adapter-plus_sdxl_vit-h.safetensors"
         )
         self.assertEqual(result.compiled.ip_adapter_image, "face-ref.png")
+
+    def test_compiles_sdxl_ip_adapter_img2img(self) -> None:
+        graph = _sdxl_graph()
+        graph["20"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "source.png"},
+        }
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["1", 2]},
+        }
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "IPAdapterModelLoader",
+            "inputs": {"ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"},
+        }
+        graph["52"] = {
+            "class_type": "IPAdapterAdvanced",
+            "inputs": {
+                "model": ["1", 0],
+                "ipadapter": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.6,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["52", 0]
+        graph["5"]["inputs"]["latent_image"] = ["21", 0]
+        graph["5"]["inputs"]["denoise"] = 0.55
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "img2img")
+        self.assertEqual(result.compiled.ip_adapter_image, "face-ref.png")
+        self.assertAlmostEqual(result.compiled.denoise, 0.55)
 
     def test_denoise_without_init_unsupported(self) -> None:
         graph = _sdxl_graph()

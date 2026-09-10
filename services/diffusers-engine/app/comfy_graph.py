@@ -658,17 +658,15 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             reason="Flux2-Klein ControlNet has no vetted pipeline yet — use ComfyUI.",
         )
     if controlnet_info is not None and img2img_mode != "txt2img":
-        # SDXL has ControlNetImg2Img / UnionImg2Img pipelines; Flux/Qwen and
-        # inpaint+ControlNet stay on Comfy for now.
-        if family != "sdxl" or img2img_mode == "inpaint":
+        # SDXL has ControlNetImg2Img / Inpaint / Union variants; Flux/Qwen
+        # ControlNet stays txt2img-only for now.
+        if family != "sdxl":
             return ClassifyResult(
                 supported=False,
                 family=family,
                 reason=(
                     "ControlNet combined with img2img/inpaint is not supported "
-                    "for this family/mode yet — use ComfyUI."
-                    if family != "sdxl"
-                    else "ControlNet combined with inpaint is not supported yet — use ComfyUI."
+                    "for this family yet — use ComfyUI."
                 ),
             )
     controlnet_name, controlnet_image, controlnet_preprocessor, controlnet_strength = (
@@ -695,13 +693,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason="Native IP-Adapter identity lock is SDXL-only — use ComfyUI for Flux/Qwen.",
         )
-    if ip_adapter_info is not None and img2img_mode != "txt2img":
-        return ClassifyResult(
-            supported=False,
-            family=family,
-            reason="IP-Adapter combined with img2img/inpaint is not supported yet.",
-        )
-    # IP-Adapter + ControlNet is supported on SDXL txt2img (and CN img2img).
+    # SDXL IP-Adapter works with txt2img / img2img / inpaint (± ControlNet).
     ip_adapter_model, ip_adapter_image, ip_adapter_strength = (
         ip_adapter_info if ip_adapter_info is not None else (None, None, 0.5)
     )

@@ -2096,9 +2096,8 @@ class PipelineHolder:
         Native SDXL from a Comfy graph — same quality stack as txt2img
         (CLIP fit, hand LoRA, RealVis CFG, fp32 VAE decode).
 
-        Supported combinations:
-        - txt2img ± ControlNet ± IP-Adapter
-        - img2img ± ControlNet (no IP-Adapter, no inpaint+ControlNet yet)
+        Supported combinations (SDXL):
+        - txt2img / img2img / inpaint ± ControlNet ± IP-Adapter
         """
         import torch
         from diffusers import (
@@ -2218,14 +2217,9 @@ class PipelineHolder:
             controlnet_path is not None and controlnet_image_path is not None
         )
         use_ip_adapter = ip_adapter_image_path is not None
-        if use_ip_adapter and use_img2img:
-            raise RuntimeError(
-                "IP-Adapter combined with img2img/inpaint is not supported yet"
-            )
-        if use_controlnet and use_img2img and img2img_mode == "inpaint":
-            raise RuntimeError(
-                "ControlNet combined with inpaint is not supported yet"
-            )
+        use_inpaint = (
+            use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
+        )
 
         if use_img2img and not use_controlnet:
             from diffusers import (
@@ -2233,7 +2227,8 @@ class PipelineHolder:
                 StableDiffusionXLInpaintPipeline,
             )
 
-            self._clear_sdxl_ip_adapter(pipe)
+            if not use_ip_adapter:
+                self._clear_sdxl_ip_adapter(pipe)
             init = Image.open(init_image_path).convert("RGB")
             init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
             i2i_kwargs: dict[str, Any] = {
@@ -2245,7 +2240,7 @@ class PipelineHolder:
                 "guidance_rescale": 0.7,
             }
             i2i_kwargs.update(encode_kwargs)
-            if img2img_mode == "inpaint" and mask_image_path:
+            if use_inpaint:
                 mask = Image.open(mask_image_path).convert("L")
                 mask = mask.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
                 i2i_pipe = StableDiffusionXLInpaintPipeline.from_pipe(pipe)
@@ -2255,10 +2250,31 @@ class PipelineHolder:
                 i2i_pipe = StableDiffusionXLImg2ImgPipeline.from_pipe(pipe)
                 mode_label = "img2img"
             i2i_pipe = self._place_compiled_pipe(i2i_pipe, torch.float16)
+            if use_ip_adapter:
+                self._ensure_sdxl_ip_adapter(
+                    i2i_pipe,
+                    model_path=ip_adapter_path,
+                    strength=ip_adapter_strength,
+                )
+                ip_image = Image.open(ip_adapter_image_path).convert("RGB")
+                ip_image = ip_image.resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                i2i_kwargs["ip_adapter_image_embeds"] = (
+                    self._sdxl_ip_adapter_image_embeds(
+                        i2i_pipe, ip_image, device=device_for_gen
+                    )
+                )
+                mode_label = f"{mode_label}+ip-adapter"
             print(
                 f"[diffusers] compiled-sdxl {mode_label} model={path.name} "
                 f"{gen_width}x{gen_height} steps={plan.steps} "
-                f"cfg={plan.guidance_scale} strength={strength:.2f}",
+                f"cfg={plan.guidance_scale} strength={strength:.2f}"
+                + (
+                    f" ip={float(ip_adapter_strength):.2f}"
+                    if use_ip_adapter
+                    else ""
+                ),
                 flush=True,
             )
             try:
@@ -2275,6 +2291,13 @@ class PipelineHolder:
                 if "mask_image" in i2i_kwargs:
                     i2i_kwargs["mask_image"] = i2i_kwargs["mask_image"].resize(
                         (768, 768), Image.Resampling.LANCZOS
+                    )
+                if use_ip_adapter:
+                    ip_small = ip_image.resize((768, 768), Image.Resampling.LANCZOS)
+                    i2i_kwargs["ip_adapter_image_embeds"] = (
+                        self._sdxl_ip_adapter_image_embeds(
+                            i2i_pipe, ip_small, device=device_for_gen
+                        )
                     )
                 with _silence_model_warnings():
                     result = i2i_pipe(**i2i_kwargs)
@@ -2300,9 +2323,13 @@ class PipelineHolder:
                 (gen_width, gen_height), Image.Resampling.LANCZOS
             )
             init = None
+            mask = None
             if use_img2img:
                 init = Image.open(init_image_path).convert("RGB")
                 init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+            if use_inpaint:
+                mask = Image.open(mask_image_path).convert("L")
+                mask = mask.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
 
             # xinsir-style "Union" SDXL ControlNets need ControlNetUnionModel +
             # the Union pipeline + an explicit control_mode.
@@ -2344,7 +2371,22 @@ class PipelineHolder:
             if not use_ip_adapter:
                 self._clear_sdxl_ip_adapter(pipe)
 
-            if use_img2img:
+            if use_inpaint:
+                if is_union:
+                    from diffusers import (
+                        StableDiffusionXLControlNetUnionInpaintPipeline,
+                    )
+
+                    cn_pipe = StableDiffusionXLControlNetUnionInpaintPipeline.from_pipe(
+                        pipe, controlnet=self._controlnet_model
+                    )
+                else:
+                    from diffusers import StableDiffusionXLControlNetInpaintPipeline
+
+                    cn_pipe = StableDiffusionXLControlNetInpaintPipeline.from_pipe(
+                        pipe, controlnet=self._controlnet_model
+                    )
+            elif use_img2img:
                 if is_union:
                     from diffusers import StableDiffusionXLControlNetUnionImg2ImgPipeline
 
@@ -2386,6 +2428,8 @@ class PipelineHolder:
                 cn_kwargs["control_image"] = (
                     [control_image] if is_union else control_image
                 )
+                if use_inpaint:
+                    cn_kwargs["mask_image"] = mask
             else:
                 cn_kwargs["width"] = gen_width
                 cn_kwargs["height"] = gen_height
@@ -2420,7 +2464,9 @@ class PipelineHolder:
                 controlnet_preprocessor,
                 "union" if is_union else "plain",
             ]
-            if use_img2img:
+            if use_inpaint:
+                mode_bits.append("inpaint")
+            elif use_img2img:
                 mode_bits.append("img2img")
             if use_ip_adapter:
                 mode_bits.append("ip-adapter")
@@ -2453,6 +2499,10 @@ class PipelineHolder:
                         (768, 768), Image.Resampling.LANCZOS
                     )
                     cn_kwargs["control_image"] = [small] if is_union else small
+                    if use_inpaint and mask is not None:
+                        cn_kwargs["mask_image"] = mask.resize(
+                            (768, 768), Image.Resampling.LANCZOS
+                        )
                 else:
                     cn_kwargs["width"] = 768
                     cn_kwargs["height"] = 768
