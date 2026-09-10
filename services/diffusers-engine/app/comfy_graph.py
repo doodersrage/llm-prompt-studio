@@ -912,12 +912,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
                 "extra ControlNetApply chains or use ComfyUI."
             ),
         )
-    if instantid_info is not None and img2img_mode == "inpaint":
-        return ClassifyResult(
-            supported=False,
-            family=family,
-            reason="InstantID + inpaint is not supported yet — use txt2img/img2img or ComfyUI.",
-        )
+    # InstantID works with txt2img / img2img / inpaint (IdentityNet only).
     # SDXL IP-Adapter works with txt2img / img2img / inpaint (± ControlNet).
     ip_adapter_model, ip_adapter_image, ip_adapter_strength = (
         ip_adapter_info if ip_adapter_info is not None else (None, None, 0.5)

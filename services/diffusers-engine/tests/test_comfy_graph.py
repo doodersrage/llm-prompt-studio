@@ -596,7 +596,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.img2img_mode, "img2img")
         self.assertEqual(result.compiled.instantid_image, "face-ref.png")
 
-    def test_instantid_inpaint_unsupported(self) -> None:
+    def test_compiles_sdxl_instantid_inpaint(self) -> None:
         graph = _sdxl_graph()
         graph["50"] = {
             "class_type": "LoadImage",
@@ -634,8 +634,11 @@ class ComfyGraphTests(unittest.TestCase):
         graph["5"]["inputs"]["latent_image"] = ["22", 2]
         graph["5"]["inputs"]["denoise"] = 0.7
         result = compile_workflow(graph)
-        self.assertFalse(result.supported)
-        self.assertIn("inpaint", result.reason.lower())
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.instantid_image, "face-ref.png")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
 
     def test_instantid_with_ip_adapter_unsupported(self) -> None:
         graph = _sdxl_graph()

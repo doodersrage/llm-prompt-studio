@@ -9,8 +9,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Diffusers engine: SDXL InstantID × img2img via InstantX `StableDiffusionXLInstantIDImg2ImgPipeline`; InstantID+inpaint stays Comfy.
-- Diffusers engine: native SDXL InstantID (`InstantIDModelLoader` / `ApplyInstantID` + InsightFace antelopev2 + InstantX IdentityNet); mutually exclusive with IP-Adapter / extra ControlNetApply; txt2img + img2img (inpaint stays Comfy). PuLID/FaceDetailer stay Comfy.
+- Diffusers engine: SDXL InstantID × inpaint via InstantX community `StableDiffusionXLInstantIDInpaintPipeline` (image=init, mask_image=mask, control_image=keypoints).
+- Diffusers engine: SDXL InstantID × img2img via InstantX `StableDiffusionXLInstantIDImg2ImgPipeline`.
+- Diffusers engine: native SDXL InstantID (`InstantIDModelLoader` / `ApplyInstantID` + InsightFace antelopev2 + InstantX IdentityNet); mutually exclusive with IP-Adapter / extra ControlNetApply; txt2img + img2img + inpaint. PuLID/FaceDetailer stay Comfy.
 - Diffusers engine: Qwen stacked plain ControlNetApply chains via `QwenImageMultiControlNetModel` (txt2img); InstantX mask-inpaint CN stays single-only.
 - Diffusers engine: classic Flux stacked ControlNetApply chains via `FluxMultiControlNetModel` (or one InstantX Union file with multiple `control_mode`s).
 - Diffusers engine: SDXL stacked ControlNetApply chains (Studio multi-ref ControlNet) via `MultiControlNetModel`, or one Union checkpoint with multiple `control_image`/`control_mode` entries.

@@ -2105,8 +2105,8 @@ class PipelineHolder:
 
         Supported combinations (SDXL):
         - txt2img / img2img / inpaint ± ControlNet ± IP-Adapter
-        - InstantID identity lock (txt2img / img2img; mutually exclusive with
-          IP-Adapter / extra ControlNetApply stacks; inpaint stays Comfy)
+        - InstantID identity lock (txt2img / img2img / inpaint; mutually
+          exclusive with IP-Adapter / extra ControlNetApply stacks)
         """
         import torch
         from diffusers import (
@@ -2244,11 +2244,6 @@ class PipelineHolder:
         )
 
         if use_instantid:
-            if use_inpaint:
-                raise RuntimeError(
-                    "InstantID + inpaint is not supported yet — use "
-                    "txt2img/img2img InstantID or ComfyUI."
-                )
             if use_controlnet or use_ip_adapter:
                 raise RuntimeError(
                     "InstantID cannot combine with ControlNetApply / IP-Adapter "
@@ -2282,7 +2277,15 @@ class PipelineHolder:
                 self._controlnet_key = cn_key
 
             self._clear_sdxl_ip_adapter(pipe)
-            if use_img2img:
+            if use_inpaint:
+                from app.pipeline_stable_diffusion_xl_instantid_inpaint import (
+                    StableDiffusionXLInstantIDInpaintPipeline,
+                )
+
+                iid_pipe = StableDiffusionXLInstantIDInpaintPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            elif use_img2img:
                 from app.pipeline_stable_diffusion_xl_instantid_img2img import (
                     StableDiffusionXLInstantIDImg2ImgPipeline,
                 )
@@ -2333,7 +2336,20 @@ class PipelineHolder:
                 "generator": generator,
                 "guidance_rescale": 0.7,
             }
-            if use_img2img:
+            mask: Image.Image | None = None
+            if use_inpaint:
+                init = Image.open(init_image_path).convert("RGB")
+                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+                mask = Image.open(mask_image_path).convert("L")
+                mask = mask.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+                # Inpaint InstantID: image=init, mask_image=mask, control_image=kps.
+                iid_kwargs["image"] = init
+                iid_kwargs["mask_image"] = mask
+                iid_kwargs["control_image"] = face_kps
+                iid_kwargs["strength"] = strength
+                iid_kwargs["width"] = gen_width
+                iid_kwargs["height"] = gen_height
+            elif use_img2img:
                 init = Image.open(init_image_path).convert("RGB")
                 init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
                 # Img2Img InstantID: image=init, control_image=keypoints.
@@ -2347,7 +2363,12 @@ class PipelineHolder:
                 iid_kwargs["height"] = gen_height
                 iid_kwargs["output_type"] = "latent"
             iid_kwargs.update(encode_kwargs)
-            mode_label = "instantid+img2img" if use_img2img else "instantid"
+            if use_inpaint:
+                mode_label = "instantid+inpaint"
+            elif use_img2img:
+                mode_label = "instantid+img2img"
+            else:
+                mode_label = "instantid"
             print(
                 f"[diffusers] compiled-sdxl {mode_label} "
                 f"model={path.name} adapter={Path(instantid_path).name} "
@@ -2366,7 +2387,19 @@ class PipelineHolder:
                 )
             except torch.cuda.OutOfMemoryError:
                 self._empty_cuda()
-                if use_img2img:
+                if use_inpaint:
+                    iid_kwargs["image"] = init.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                    iid_kwargs["mask_image"] = mask.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                    iid_kwargs["control_image"] = face_kps.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                    iid_kwargs["width"] = 768
+                    iid_kwargs["height"] = 768
+                elif use_img2img:
                     iid_kwargs["image"] = init.resize(
                         (768, 768), Image.Resampling.LANCZOS
                     )
