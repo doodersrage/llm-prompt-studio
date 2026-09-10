@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Diffusers engine: assemble classic FLUX.1 offline when gated `FLUX.1-dev` hub shell is missing (Comfy T5 + openai CLIP tokenizers); attach `Qwen2VLProcessor` before Qwen Image Edit `from_pipe`.
 - Diffusers engine: fix Flux2-Klein TE device mismatch under unet-resident / group-offload (pre-encode on TE device, pass `prompt_embeds`); wake VAE for ReferenceLatent / inpaint condition encode.
 - Diffusers engine: restore VAE/TE bf16 after Flux2-Klein `from_pipe` inpaint (avoids bf16 input vs float32 bias).
 - Diffusers engine: GPU smoke coverage for FluxGuidance, Klein ReferenceLatent edit, Klein inpaint, and Qwen Image Edit (`python scripts/gpu_smoke_test.py new`).

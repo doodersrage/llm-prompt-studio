@@ -3295,7 +3295,8 @@ class PipelineHolder:
             vae = AutoencoderKL.from_single_file(str(vae_path), torch_dtype=dtype)
             print(f"[diffusers] Flux VAE {vae_path.name}", flush=True)
 
-        # Shell from hub for tokenizers / missing TE2; never replace local transformer.
+        # Prefer hub shell when cached; otherwise assemble fully from drop-ins
+        # + Comfy/openai tokenizers (FLUX.1-dev is gated and often absent).
         hub_kwargs: dict[str, Any] = {
             "transformer": transformer,
             "torch_dtype": dtype,
@@ -3306,24 +3307,31 @@ class PipelineHolder:
             hub_kwargs["text_encoder_2"] = text_encoder_2
         if vae is not None:
             hub_kwargs["vae"] = vae
+        pipe = None
         try:
             pipe = FluxPipeline.from_pretrained(
                 "black-forest-labs/FLUX.1-dev",
                 local_files_only=True,
                 **hub_kwargs,
             )
-        except Exception:
-            pipe = FluxPipeline.from_pretrained(
-                "black-forest-labs/FLUX.1-dev",
-                **hub_kwargs,
+        except Exception as hub_exc:
+            print(
+                f"[diffusers] Flux.1 hub shell unavailable ({hub_exc}); "
+                "assembling offline",
+                flush=True,
+            )
+            pipe = self._assemble_flux1_pipeline(
+                transformer=transformer,
+                text_encoder=text_encoder,
+                text_encoder_2=text_encoder_2,
+                vae=vae,
+                dtype=dtype,
             )
         # Ensure tokenizers exist even when TE came from drop-ins.
         if getattr(pipe, "tokenizer", None) is None:
-            pipe.tokenizer = CLIPTokenizer.from_pretrained(
-                "openai/clip-vit-large-patch14"
-            )
+            pipe.tokenizer = self._load_flux1_clip_tokenizer()
         if getattr(pipe, "tokenizer_2", None) is None:
-            pipe.tokenizer_2 = T5TokenizerFast.from_pretrained("google/t5-v1_1-xxl")
+            pipe.tokenizer_2 = self._load_flux1_t5_tokenizer()
         print(
             f"[diffusers] Flux.1 assembled transformer={unet_label} "
             f"clip_l={'drop-in' if text_encoder is not None else 'hub'} "
@@ -3332,6 +3340,115 @@ class PipelineHolder:
             flush=True,
         )
         return pipe
+
+    def _load_flux1_clip_tokenizer(self) -> Any:
+        from transformers import CLIPTokenizer
+
+        try:
+            return CLIPTokenizer.from_pretrained(
+                "openai/clip-vit-large-patch14",
+                local_files_only=True,
+            )
+        except Exception:
+            return CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+
+    def _load_flux1_t5_tokenizer(self) -> Any:
+        from transformers import T5TokenizerFast
+
+        from app.model_resolve import comfyui_root
+
+        candidates: list[Path] = []
+        root = comfyui_root()
+        if root is not None:
+            candidates.append(root / "comfy" / "text_encoders" / "t5_tokenizer")
+        for path in candidates:
+            if (path / "tokenizer.json").is_file():
+                tok = T5TokenizerFast.from_pretrained(str(path), local_files_only=True)
+                if getattr(tok, "vocab_size", 0) >= 32000:
+                    print(f"[diffusers] Flux T5 tokenizer from {path}", flush=True)
+                    return tok
+        # Last resort — may hit hub; reject stub vocabs (<1k).
+        for local_only in (True, False):
+            try:
+                tok = T5TokenizerFast.from_pretrained(
+                    "google/t5-v1_1-xxl",
+                    local_files_only=local_only,
+                )
+                if getattr(tok, "vocab_size", 0) >= 32000:
+                    return tok
+            except Exception:
+                continue
+        raise RuntimeError(
+            "Flux T5 tokenizer not found — place Comfy's "
+            "comfy/text_encoders/t5_tokenizer or cache google/t5-v1_1-xxl."
+        )
+
+    def _assemble_flux1_pipeline(
+        self,
+        *,
+        transformer: Any,
+        text_encoder: Any,
+        text_encoder_2: Any,
+        vae: Any,
+        dtype: Any,
+    ) -> Any:
+        """Build FluxPipeline without black-forest-labs/FLUX.1-dev hub access."""
+        from diffusers import FlowMatchEulerDiscreteScheduler, FluxPipeline
+
+        if text_encoder is None or text_encoder_2 is None or vae is None:
+            raise RuntimeError(
+                "Offline Flux.1 assemble requires drop-in CLIP-L + T5 + VAE "
+                "(hub FLUX.1-dev shell unavailable)."
+            )
+        del dtype
+        scheduler = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=3.0,
+            use_dynamic_shifting=True,
+            base_shift=0.5,
+            max_shift=1.15,
+            base_image_seq_len=256,
+            max_image_seq_len=4096,
+        )
+        pipe = FluxPipeline(
+            scheduler=scheduler,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=self._load_flux1_clip_tokenizer(),
+            text_encoder_2=text_encoder_2,
+            tokenizer_2=self._load_flux1_t5_tokenizer(),
+            transformer=transformer,
+        )
+        try:
+            pipe.set_progress_bar_config(disable=True)
+        except Exception:
+            pass
+        return pipe
+
+    def _ensure_qwen_edit_processor(self, pipe: Any) -> Any:
+        """Attach Qwen2VLProcessor required by QwenImageEdit*Pipeline.from_pipe."""
+        from transformers import Qwen2VLProcessor
+        from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
+            Qwen2VLImageProcessor,
+        )
+        from transformers.models.qwen2_vl.video_processing_qwen2_vl import (
+            Qwen2VLVideoProcessor,
+        )
+
+        existing = getattr(pipe, "processor", None)
+        if existing is not None:
+            return existing
+        tokenizer = getattr(pipe, "tokenizer", None)
+        if tokenizer is None:
+            raise RuntimeError("Qwen edit requires a tokenizer to build processor.")
+        processor = Qwen2VLProcessor(
+            image_processor=Qwen2VLImageProcessor(),
+            tokenizer=tokenizer,
+            video_processor=Qwen2VLVideoProcessor(),
+        )
+        pipe.processor = processor
+        print("[diffusers] Qwen edit processor attached (Qwen2VLProcessor)", flush=True)
+        return processor
 
     def _qwen_hub_snapshot(self) -> Path | None:
         """Locate a usable cached Qwen/Qwen-Image snapshot (TE/tokenizer/scheduler/vae)."""
@@ -4910,6 +5027,7 @@ class PipelineHolder:
                     (gen_width, gen_height), Image.Resampling.LANCZOS
                 )
                 image_arg: Any = canvas
+                self._ensure_qwen_edit_processor(pipe)
                 edit_pipe = QwenImageEditInpaintPipeline.from_pipe(pipe)
             else:
                 edit_images = [
@@ -4919,6 +5037,7 @@ class PipelineHolder:
                     for p in edit_paths
                 ]
                 image_arg = edit_images if use_plus else edit_images[0]
+                self._ensure_qwen_edit_processor(pipe)
                 if use_plus:
                     edit_pipe = QwenImageEditPlusPipeline.from_pipe(pipe)
                 else:
