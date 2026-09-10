@@ -14,7 +14,7 @@ on your machine.)
 With no arguments it runs every test below. Pass one or more test names to
 run a subset, e.g. just the newest Qwen ControlNet work:
 
-    python scripts/gpu_smoke_test.py qwen_controlnet_union qwen_controlnet_inpaint_variant_rejected
+    python scripts/gpu_smoke_test.py qwen_controlnet_union qwen_controlnet_inpaint_variant_txt2img_rejected
 
 Each test calls app.pipeline.pipeline_holder directly — the same functions
 workflow_exec.py calls — loads real checkpoints from $COMFYUI_ROOT/models
