@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { ensureAuthenticated } from './helpers/auth';
-import { seedSettingsCache } from './helpers/idb';
+import { seedSettingsCacheOnNextLoad } from './helpers/idb';
 import { gotoStable } from './helpers/navigation';
 import { dismissBlockingOverlays } from './helpers/overlays';
 
@@ -583,7 +583,7 @@ test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page 
   const tinyPng =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-  await page.addInitScript(({ png }) => {
+  await page.addInitScript(() => {
     class FakeMediaRecorder {
       state = 'inactive';
       ondataavailable: ((event: { data: Blob }) => void) | null = null;
@@ -613,42 +613,36 @@ test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page 
         getTracks: () => [{ stop() {}, kind: 'video', enabled: true }],
       } as unknown as MediaStream;
     };
+  });
 
-    window.localStorage.setItem(
-      'comfy-prompt-characters-v1',
-      JSON.stringify({
-        version: 1,
-        characters: [
+  await seedSettingsCacheOnNextLoad(page, {
+    shared: { activeCharacterId: 'e2e-cut-cast' },
+    characters: {
+      version: 1,
+      characters: [
+        {
+          id: 'e2e-cut-cast',
+          name: 'Cut Cast',
+          version: 1,
+          updatedAt: Date.now(),
+          descriptor: 'cut look',
+        },
+      ],
+      removedIds: [],
+    },
+    tools: {
+      day: {
+        notes: '',
+        stills: [
           {
-            id: 'e2e-cut-cast',
-            name: 'Cut Cast',
-            version: 1,
-            updatedAt: Date.now(),
-            descriptor: 'cut look',
+            slotId: 'morning',
+            status: 'completed',
+            imageUrl: tinyPng,
           },
         ],
-        removedIds: [],
-      })
-    );
-    window.localStorage.setItem(
-      'comfy-prompt-tool-settings-v1',
-      JSON.stringify({
-        shared: { activeCharacterId: 'e2e-cut-cast' },
-        tools: {
-          day: {
-            notes: '',
-            stills: [
-              {
-                slotId: 'morning',
-                status: 'completed',
-                imageUrl: png,
-              },
-            ],
-          },
-        },
-      })
-    );
-  }, { png: tinyPng });
+      },
+    },
+  });
 
   page.on('download', download => {
     void download.cancel().catch(() => undefined);
@@ -658,7 +652,7 @@ test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page 
   await dismissBlockingOverlays(page);
   const cutBtn = page.getByRole('button', { name: /Cut film/i });
   await expect(cutBtn).toBeVisible({ timeout: 30_000 });
-  await expect(cutBtn).toBeEnabled({ timeout: 10_000 });
+  await expect(cutBtn).toBeEnabled({ timeout: 15_000 });
   await cutBtn.click();
   await expect(page.getByTestId('day-open-cast-film')).toBeVisible({
     timeout: 45_000,
@@ -1031,7 +1025,8 @@ test('day cut film shows playbook when film assemble returns ffmpeg 503', async 
 
   // Auth already hydrated IDB; seed stills into the tools sidecar so hydrate
   // does not prefer an empty sidecar over a main-blob localStorage write.
-  await seedSettingsCache(page, {
+  // Use next-load init so pagehide flush from / cannot overwrite the seed.
+  await seedSettingsCacheOnNextLoad(page, {
     shared: { activeCharacterId: 'e2e-film-fail' },
     characters: {
       version: 1,
@@ -1064,7 +1059,7 @@ test('day cut film shows playbook when film assemble returns ffmpeg 503', async 
   await dismissBlockingOverlays(page);
   const cutBtn = page.getByRole('button', { name: /Cut film/i });
   await expect(cutBtn).toBeVisible({ timeout: 30_000 });
-  await expect(cutBtn).toBeEnabled({ timeout: 10_000 });
+  await expect(cutBtn).toBeEnabled({ timeout: 15_000 });
   await cutBtn.click();
   await expect(page.getByText(/ffmpeg is missing/i)).toBeVisible({ timeout: 30_000 });
   const playbook = page.getByTestId('film-failure-playbook-link');

@@ -109,9 +109,13 @@ test('studio analytics tab loads', async ({ page }) => {
 
 test('settings comfyui loader maps section loads', async ({ page }) => {
   // Loader maps live under workflow-patching (not the top of the ComfyUI tab).
+  // Deep link already expands essentials; avoid re-clicking the ComfyUI tab
+  // (that can drop `section` and hide Checkpoint map).
   await gotoStable(page, '/settings?tab=comfyui&section=workflow-patching');
-  await openComfyUiSettingsTab(page);
-  const patching = page.locator('#settings-comfyui-workflow-patching');
+  await revealFullSettings(page);
+  const patching = page.locator('#settings-comfyui-workflow-patching').first();
+  await expect(patching).toBeVisible({ timeout: 45_000 });
+  await patching.scrollIntoViewIfNeeded();
   await expect(patching.getByText(/Checkpoint map/i)).toBeVisible({ timeout: 30_000 });
   await expect(patching.getByRole('button', { name: /Merge suggested loader maps/i })).toBeVisible({
     timeout: 30_000,
