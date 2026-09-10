@@ -956,6 +956,83 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.img2img_mode, "inpaint")
         self.assertIsNotNone(result.compiled.controlnet)
 
+    def test_compiles_qwen_image_edit(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEdit",
+            "inputs": {
+                "prompt": "make it rainy",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image": ["20", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEdit",
+            "inputs": {
+                "prompt": "",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image": ["20", 0],
+            },
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "figure1.png"}}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit")
+        self.assertEqual(result.compiled.qwen_edit_images, ["figure1.png"])
+        self.assertEqual(result.compiled.positive, "make it rainy")
+
+    def test_compiles_qwen_image_edit_plus(self) -> None:
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "swap outfits",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "image1": ["20", 0],
+                "image2": ["21", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+            },
+        }
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "a.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "b.png"}}
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "edit_plus")
+        self.assertEqual(result.compiled.qwen_edit_images, ["a.png", "b.png"])
+
+    def test_qwen_edit_encoder_without_images_is_txt2img(self) -> None:
+        # Studio disconnects LoadImages for pure T2I with edit encoder class.
+        graph = _qwen_graph()
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": "a cat",
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+            },
+        }
+        graph["5"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "", "clip": ["2", 0], "vae": ["3", 0]},
+        }
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.qwen_edit_mode, "none")
+        self.assertEqual(result.compiled.positive, "a cat")
+
     def test_compiles_qwen_controlnet_img2img(self) -> None:
         graph = self._controlnet_graph(
             _qwen_graph(), positive_id="4", negative_id="5", ksampler_id="8",

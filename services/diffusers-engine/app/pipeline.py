@@ -4460,14 +4460,17 @@ class PipelineHolder:
         controlnet_preprocessor: str = "none",
         controlnet_strength: float = 1.0,
         controlnet_stack: list[dict[str, Any]] | None = None,
+        qwen_edit_mode: str = "none",
+        qwen_edit_image_paths: list[str] | None = None,
     ) -> Image.Image:
         """Native Qwen-Image from drop-in weights (+ optional VAE/Lightning LoRA).
 
         ControlNet: plain Union/Canny via ``QwenImageControlNetPipeline``
-        (txt2img, ± ``QwenImageMultiControlNetModel`` stacks). Mask-conditioned
-        InstantX ControlNet-Inpainting via ``QwenImageControlNetInpaintPipeline``
-        when the graph is inpaint and the checkpoint's ``controlnet_x_embedder``
-        is wider than ``img_in`` (single CN only).
+        (txt2img / img2img, ± ``QwenImageMultiControlNetModel`` stacks).
+        Mask-conditioned InstantX ControlNet-Inpainting via
+        ``QwenImageControlNetInpaintPipeline`` on inpaint graphs (single CN).
+        Image Edit: ``QwenImageEditPipeline`` / ``QwenImageEditPlusPipeline``
+        when TextEncodeQwenImageEdit(+Plus) has linked LoadImage refs.
         """
         import torch
 
@@ -4659,6 +4662,142 @@ class PipelineHolder:
         use_inpaint = (
             use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
         )
+        edit_paths = [p for p in (qwen_edit_image_paths or []) if p]
+        if edit_paths:
+            if use_controlnet:
+                raise RuntimeError(
+                    "Qwen Image Edit + ControlNet is not supported — use one path."
+                )
+            if use_img2img:
+                raise RuntimeError(
+                    "Qwen Image Edit cannot combine with VAEEncode img2img/inpaint."
+                )
+            try:
+                from diffusers import (
+                    QwenImageEditPipeline,
+                    QwenImageEditPlusPipeline,
+                )
+            except ImportError as exc:
+                raise RuntimeError(
+                    "This diffusers install has no QwenImageEditPipeline — "
+                    "upgrade diffusers or use ComfyUI for edit graphs."
+                ) from exc
+
+            use_plus = (qwen_edit_mode == "edit_plus") or len(edit_paths) > 1
+            edit_images = [
+                Image.open(p).convert("RGB").resize(
+                    (gen_width, gen_height), Image.Resampling.LANCZOS
+                )
+                for p in edit_paths
+            ]
+            image_arg: Any = edit_images if use_plus else edit_images[0]
+
+            _te_before = getattr(pipe, "text_encoder", None)
+            print(
+                f"[diffusers] TE dtype before edit from_pipe: "
+                f"{next(_te_before.parameters()).dtype if _te_before is not None else None}",
+                flush=True,
+            )
+            if use_plus:
+                edit_pipe = QwenImageEditPlusPipeline.from_pipe(pipe)
+            else:
+                edit_pipe = QwenImageEditPipeline.from_pipe(pipe)
+            self._restore_pipe_component_dtype(edit_pipe, dtype)
+
+            te = getattr(edit_pipe, "text_encoder", None)
+            transformer = getattr(edit_pipe, "transformer", None)
+            vae = getattr(edit_pipe, "vae", None)
+            if transformer is not None:
+                self._force_module_cpu(transformer)
+                self._unet_resident = False
+            self._empty_cuda()
+            if te is None or not hasattr(edit_pipe, "encode_prompt"):
+                raise RuntimeError(
+                    "Qwen Edit pipeline has no text_encoder/encode_prompt."
+                )
+            try:
+                self._bulk_module_to_cuda(te, torch.device("cuda"))
+                prompt_embeds, prompt_embeds_mask = edit_pipe.encode_prompt(
+                    prompt=shaped_prompt,
+                    image=image_arg,
+                    device=torch.device("cuda"),
+                    num_images_per_prompt=1,
+                )
+                negative_prompt_embeds = None
+                negative_prompt_embeds_mask = None
+                if shaped_negative.strip() and cfg > 1.01:
+                    negative_prompt_embeds, negative_prompt_embeds_mask = (
+                        edit_pipe.encode_prompt(
+                            prompt=shaped_negative,
+                            image=image_arg,
+                            device=torch.device("cuda"),
+                            num_images_per_prompt=1,
+                        )
+                    )
+            finally:
+                self._force_module_cpu(te)
+                self._empty_cuda()
+
+            edit_pipe = self._place_compiled_pipe(
+                edit_pipe,
+                torch.bfloat16,
+                prefer_offload=True,
+                pixel_count=max(1, int(gen_width) * int(gen_height)),
+            )
+            if vae is not None:
+                try:
+                    vae.to("cuda", dtype=torch.bfloat16)
+                except Exception:
+                    pass
+
+            edit_kwargs: dict[str, Any] = {
+                "image": image_arg,
+                "prompt_embeds": prompt_embeds,
+                "width": gen_width,
+                "height": gen_height,
+                "num_inference_steps": step_count,
+                "generator": generator,
+            }
+            if prompt_embeds_mask is not None:
+                edit_kwargs["prompt_embeds_mask"] = prompt_embeds_mask
+            if negative_prompt_embeds is not None:
+                edit_kwargs["negative_prompt_embeds"] = negative_prompt_embeds
+                if negative_prompt_embeds_mask is not None:
+                    edit_kwargs["negative_prompt_embeds_mask"] = (
+                        negative_prompt_embeds_mask
+                    )
+            try:
+                import inspect
+
+                sig = inspect.signature(edit_pipe.__call__)
+                if "true_cfg_scale" in sig.parameters:
+                    edit_kwargs["true_cfg_scale"] = cfg
+                elif "guidance_scale" in sig.parameters:
+                    edit_kwargs["guidance_scale"] = cfg
+                if "callback_on_step_end" in sig.parameters:
+                    edit_kwargs["callback_on_step_end"] = callback_on_step_end
+            except Exception:
+                edit_kwargs.setdefault("true_cfg_scale", cfg)
+
+            mode_label = "edit-plus" if use_plus else "edit"
+            print(
+                f"[diffusers] compiled-qwen {mode_label} "
+                f"model={Path(model_path).name} refs={len(edit_paths)} "
+                f"{gen_width}x{gen_height} steps={step_count} cfg={cfg}",
+                flush=True,
+            )
+            try:
+                result = edit_pipe(**edit_kwargs)
+                return result.images[0]
+            except Exception:
+                try:
+                    self._release_pipe()
+                except Exception:
+                    pass
+                raise
+            finally:
+                self._empty_cuda()
+
         if use_controlnet:
             from app.safetensors_peek import (
                 looks_like_diffusers_qwen_controlnet,

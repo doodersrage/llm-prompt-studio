@@ -105,6 +105,13 @@ _INSTANTID_OK = frozenset(
     }
 )
 
+_QWEN_EDIT_OK = frozenset(
+    {
+        "TextEncodeQwenImageEdit",
+        "TextEncodeQwenImageEditPlus",
+    }
+)
+
 _SDXL_OK = frozenset(
     {
         "CheckpointLoaderSimple",
@@ -158,6 +165,7 @@ _QWEN_OK = frozenset(
         *_INPAINT_OK,
         *_CONTROLNET_OK,
         *_POST_OK,
+        *_QWEN_EDIT_OK,
         "CLIPTextEncode",
         "EmptyLatentImage",
         "EmptySD3LatentImage",
@@ -182,8 +190,6 @@ _ALWAYS_UNSUPPORTED = frozenset(
         "FaceDetailer",
         "WanImageToVideo",
         "HunyuanImageToVideo",
-        "TextEncodeQwenImageEdit",
-        "TextEncodeQwenImageEditPlus",
     }
 )
 
@@ -265,6 +271,9 @@ class CompiledWorkflow:
     instantid_image: str | None = None
     instantid_strength: float = 0.8
     instantid_controlnet: str | None = None
+    # Qwen Image Edit (TextEncodeQwenImageEdit / Plus → LoadImage refs).
+    qwen_edit_mode: Literal["none", "edit", "edit_plus"] = "none"
+    qwen_edit_images: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -448,18 +457,64 @@ def _trace_img2img_assets(
 def _resolve_conditioning_text(
     nodes: dict[str, dict[str, Any]], node_id: str | None, branch: str
 ) -> str:
-    """Follow CLIPTextEncode.text through ControlNetApply(Advanced) nodes,
-    which pass conditioning through rather than encode it themselves."""
+    """Follow CLIPTextEncode / Qwen Edit encode text through ControlNetApply."""
     node = nodes.get(node_id or "")
     if not node:
         return ""
     ctype = node["class_type"]
     if ctype == "CLIPTextEncode":
         return _as_str(node["inputs"].get("text"))
+    if ctype in _QWEN_EDIT_OK:
+        return _as_str(node["inputs"].get("prompt"))
     if ctype in ("ControlNetApply", "ControlNetApplyAdvanced"):
         inner_id = _link_id(node["inputs"].get(branch))
         return _resolve_conditioning_text(nodes, inner_id, branch)
+    if ctype == "InpaintModelConditioning":
+        inner_id = _link_id(node["inputs"].get(branch))
+        return _resolve_conditioning_text(nodes, inner_id, branch)
     return ""
+
+
+def _trace_qwen_edit(
+    nodes: dict[str, dict[str, Any]], positive_id: str | None
+) -> tuple[Literal["none", "edit", "edit_plus"], list[str]]:
+    """Resolve TextEncodeQwenImageEdit(+Plus) reference LoadImage names.
+
+    Returns (mode, image filenames). Mode is ``none`` when the positive branch
+    is not an edit encoder (or edit encoder with no linked images — T2I).
+    """
+    node = nodes.get(positive_id or "", {})
+    ctype = node.get("class_type")
+    # Walk through ControlNet / inpaint wrappers to the encoder.
+    seen: set[str] = set()
+    current_id = positive_id
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = nodes.get(current_id, {})
+        ctype = node.get("class_type")
+        if ctype in _QWEN_EDIT_OK:
+            break
+        if ctype in ("ControlNetApply", "ControlNetApplyAdvanced", "InpaintModelConditioning"):
+            current_id = _link_id(node["inputs"].get("positive") or node["inputs"].get("conditioning"))
+            continue
+        return "none", []
+    else:
+        return "none", []
+
+    inputs = node.get("inputs") or {}
+    images: list[str] = []
+    if ctype == "TextEncodeQwenImageEdit":
+        name = _resolve_load_image_name(nodes, _link_id(inputs.get("image")))
+        if name:
+            images.append(name)
+        return ("edit" if images else "none"), images
+
+    # EditPlus: image1 / image2 / image3
+    for key in ("image1", "image2", "image3"):
+        name = _resolve_load_image_name(nodes, _link_id(inputs.get(key)))
+        if name:
+            images.append(name)
+    return ("edit_plus" if images else "none"), images
 
 
 def _resolve_one_controlnet_apply(
@@ -724,6 +779,9 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
     neg_id = _link_id(sampler["inputs"].get("negative"))
     positive_text = _resolve_conditioning_text(nodes, pos_id, "positive")
     negative_text = _resolve_conditioning_text(nodes, neg_id, "negative")
+    qwen_edit_mode, qwen_edit_images = (
+        _trace_qwen_edit(nodes, pos_id) if family == "qwen" else ("none", [])
+    )
 
     width = _as_int(latent.get("inputs", {}).get("width"), 1024)
     height = _as_int(latent.get("inputs", {}).get("height"), 1024)
@@ -856,6 +914,25 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
                     "for this family/mode yet — use ComfyUI."
                 ),
             )
+    if qwen_edit_mode != "none" and controlnets:
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Qwen Image Edit + ControlNet is not supported yet — use "
+                "edit alone or ComfyUI."
+            ),
+        )
+    if qwen_edit_mode != "none" and img2img_mode != "txt2img":
+        return ClassifyResult(
+            supported=False,
+            family=family,
+            reason=(
+                "Qwen Image Edit cannot combine with VAEEncode img2img/inpaint — "
+                "wire refs on TextEncodeQwenImageEdit(+Plus) only, or use ComfyUI."
+            ),
+        )
+
     primary = controlnets[0] if controlnets else None
     controlnet_name = primary.name if primary else None
     controlnet_image = primary.image if primary else None
@@ -968,6 +1045,8 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
         instantid_image=instantid_image,
         instantid_strength=instantid_strength,
         instantid_controlnet=instantid_controlnet,
+        qwen_edit_mode=qwen_edit_mode,
+        qwen_edit_images=list(qwen_edit_images),
     )
     return ClassifyResult(
         supported=True,

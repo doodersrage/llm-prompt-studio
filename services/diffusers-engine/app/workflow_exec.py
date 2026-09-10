@@ -314,6 +314,12 @@ def execute_compiled(
                 float(primary["strength"]) if primary else compiled.controlnet_strength
             ),
             controlnet_stack=controlnet_stack or None,
+            qwen_edit_mode=compiled.qwen_edit_mode,
+            qwen_edit_image_paths=[
+                _resolve_input_image(name) for name in compiled.qwen_edit_images
+            ]
+            if compiled.qwen_edit_images
+            else None,
         )
         return _apply_output_post(compiled, image)
 
@@ -361,4 +367,6 @@ def assets_preview(compiled: CompiledWorkflow | None) -> dict[str, Any]:
         "instantid_image": compiled.instantid_image,
         "instantid_strength": compiled.instantid_strength,
         "instantid_controlnet": compiled.instantid_controlnet,
+        "qwen_edit_mode": compiled.qwen_edit_mode,
+        "qwen_edit_images": list(compiled.qwen_edit_images),
     }

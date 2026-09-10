@@ -84,6 +84,10 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint is native (`Flux2KleinInpaintPipeline`);
   Klein plain img2img (no mask) and Klein ControlNet stay unsupported.
+- **Qwen Image Edit is native** (`TextEncodeQwenImageEdit` /
+  `TextEncodeQwenImageEditPlus` with linked LoadImage refs →
+  `QwenImageEditPipeline` / `QwenImageEditPlusPipeline`). Edit encoder with no
+  images still compiles as plain txt2img. Edit + ControlNet / VAEEncode stays Comfy.
 - **Still not attempted: PuLID / FaceDetailer.** PuLID (Flux) needs EVA-CLIP +
   attention hooks; FaceDetailer is Impact Pack. Keep those on ComfyUI.
   InstantID is native for SDXL (txt2img + img2img + inpaint) — see InstantID note above.
