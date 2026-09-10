@@ -4862,37 +4862,26 @@ class PipelineHolder:
         )
 
         # Flux2-Klein / Flux.1: TE may be parked on CPU while _execution_device
-        # is CUDA — pre-encode and pass embeds.
+        # is CUDA — pre-encode and pass embeds. VAE is also parked; wake it for
+        # decode (and init/ref encode).
         klein_embeds = self._flux2_klein_preencode_prompt(run_pipe, shaped_prompt)
+        flux1_embeds = None
         if klein_embeds is not None:
             kwargs.pop("prompt", None)
             kwargs["prompt_embeds"] = klein_embeds
-            vae = getattr(run_pipe, "vae", None)
-            if (
-                vae is not None
-                and torch.cuda.is_available()
-                and (reference_images is not None or init_image is not None)
-            ):
-                try:
-                    vae.to(device="cuda", dtype=torch.bfloat16)
-                except Exception as exc:
-                    print(f"[diffusers] Klein VAE→CUDA skipped: {exc}", flush=True)
         else:
             flux1_embeds = self._flux1_preencode_prompt(run_pipe, shaped_prompt)
             if flux1_embeds is not None:
                 kwargs.pop("prompt", None)
                 kwargs.pop("negative_prompt", None)
                 kwargs.update(flux1_embeds)
-                vae = getattr(run_pipe, "vae", None)
-                if (
-                    vae is not None
-                    and torch.cuda.is_available()
-                    and (reference_images is not None or init_image is not None)
-                ):
-                    try:
-                        vae.to(device="cuda", dtype=torch.bfloat16)
-                    except Exception as exc:
-                        print(f"[diffusers] Flux VAE→CUDA skipped: {exc}", flush=True)
+        if klein_embeds is not None or flux1_embeds is not None:
+            vae = getattr(run_pipe, "vae", None)
+            if vae is not None and torch.cuda.is_available():
+                try:
+                    vae.to(device="cuda", dtype=torch.bfloat16)
+                except Exception as exc:
+                    print(f"[diffusers] Flux VAE→CUDA skipped: {exc}", flush=True)
 
         try:
             result = run_pipe(**kwargs)
