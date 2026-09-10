@@ -62,7 +62,7 @@ export async function openComfyUiSettingsTab(page: Page): Promise<void> {
     .filter({ hasText: /^ComfyUI/ });
   if (!(await tab.isVisible({ timeout: 5_000 }).catch(() => false))) {
     // Still wait for the connection hub when deep-linked — tab chrome can lag.
-    await expect(page.locator('#settings-comfyui-connection'))
+    await expect(page.locator('#settings-comfyui-connection').first())
       .toBeVisible({
         timeout: 30_000,
       })
@@ -81,7 +81,8 @@ export async function openComfyUiSettingsTab(page: Page): Promise<void> {
     });
   }
   // Dynamic ComfyUI panel mounts after the shell; connection is always essentials.
-  await expect(page.locator('#settings-comfyui-connection')).toBeVisible({
+  // Strict mode: React Strict/dev remounts can briefly leave two hubs in the DOM.
+  await expect(page.locator('#settings-comfyui-connection').first()).toBeVisible({
     timeout: 30_000,
   });
 }

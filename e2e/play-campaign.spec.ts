@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { ensureAuthenticated } from './helpers/auth';
+import { seedSettingsCache } from './helpers/idb';
 import { gotoStable } from './helpers/navigation';
 import { dismissBlockingOverlays } from './helpers/overlays';
 
@@ -1028,42 +1029,36 @@ test('day cut film shows playbook when film assemble returns ffmpeg 503', async 
     await route.continue();
   });
 
-  await page.addInitScript(({ png }) => {
-    window.localStorage.setItem(
-      'comfy-prompt-characters-v1',
-      JSON.stringify({
-        version: 1,
-        characters: [
+  // Auth already hydrated IDB; seed stills into the tools sidecar so hydrate
+  // does not prefer an empty sidecar over a main-blob localStorage write.
+  await seedSettingsCache(page, {
+    shared: { activeCharacterId: 'e2e-film-fail' },
+    characters: {
+      version: 1,
+      characters: [
+        {
+          id: 'e2e-film-fail',
+          name: 'Film Fail',
+          version: 1,
+          updatedAt: Date.now(),
+          descriptor: 'cut look',
+        },
+      ],
+      removedIds: [],
+    },
+    tools: {
+      day: {
+        notes: '',
+        stills: [
           {
-            id: 'e2e-film-fail',
-            name: 'Film Fail',
-            version: 1,
-            updatedAt: Date.now(),
-            descriptor: 'cut look',
+            slotId: 'morning',
+            status: 'completed',
+            imageUrl: tinyPng,
           },
         ],
-        removedIds: [],
-      })
-    );
-    window.localStorage.setItem(
-      'comfy-prompt-tool-settings-v1',
-      JSON.stringify({
-        shared: { activeCharacterId: 'e2e-film-fail' },
-        tools: {
-          day: {
-            notes: '',
-            stills: [
-              {
-                slotId: 'morning',
-                status: 'completed',
-                imageUrl: png,
-              },
-            ],
-          },
-        },
-      })
-    );
-  }, { png: tinyPng });
+      },
+    },
+  });
 
   await gotoStable(page, '/day?character=e2e-film-fail');
   await dismissBlockingOverlays(page);

@@ -28,6 +28,36 @@ export async function putAppKv(page: Page, entries: Record<string, unknown>): Pr
   }, entries);
 }
 
+/**
+ * Seed settings after auth. Tool slices live in the tools sidecar — writing only
+ * `comfy-prompt-tool-settings-v1.tools` loses to an empty IDB sidecar on hydrate.
+ */
+export async function seedSettingsCache(
+  page: Page,
+  cache: {
+    shared?: Record<string, unknown>;
+    tools?: Record<string, unknown>;
+    characters?: unknown;
+  }
+): Promise<void> {
+  const updatedAt = Date.now();
+  const entries: Record<string, unknown> = {
+    'comfy-prompt-tool-settings-v1': {
+      shared: cache.shared ?? {},
+      tools: {},
+      updatedAt,
+    },
+    'comfy-prompt-tool-settings-tools-v1': {
+      tools: cache.tools ?? {},
+      updatedAt,
+    },
+  };
+  if (cache.characters !== undefined) {
+    entries['comfy-prompt-characters-v1'] = cache.characters;
+  }
+  await putAppKv(page, entries);
+}
+
 /** Replace gallery Dexie rows + localStorage mirror. */
 export async function replaceGalleryIdb(
   page: Page,
