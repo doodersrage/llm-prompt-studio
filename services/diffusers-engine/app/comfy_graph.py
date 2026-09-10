@@ -1229,7 +1229,7 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=(
                 "IP-Adapter present but could not resolve a reference LoadImage "
-                "IPAdapterModelLoader → IPAdapter / IPAdapterAdvanced → "
+                "(IPAdapterModelLoader → IPAdapter / IPAdapterAdvanced → "
                 "LoadImage required)."
             ),
         )

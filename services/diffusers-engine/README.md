@@ -121,11 +121,8 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
 - **Post polish:** `ImageSharpen` (UnsharpMask), `SaveImageAdvanced` /
   `SaveImageExtended`, and basic `IPAdapter` (alongside `IPAdapterAdvanced`)
   compile natively.
-- **Still not attempted: PuLID / FaceDetailer.** PuLID (Flux) needs EVA-CLIP +
-  attention hooks; FaceDetailer is Impact Pack. Keep those on ComfyUI.
-  InstantID is native for SDXL (txt2img + img2img + inpaint) — see InstantID note above.
 - **SDXL IP-Adapter identity lock is native.** `IPAdapterModelLoader` →
-  `IPAdapterAdvanced` → `LoadImage` compiles on SDXL via Diffusers
+  `IPAdapter` / `IPAdapterAdvanced` → `LoadImage` compiles on SDXL via Diffusers
   `IPAdapterMixin`. Classic Plus weights load locally; Comfy FaceID/PuLID-SDXL
   drop-ins (`image_proj.mapping_*`) fall back to hub
   `h94/IP-Adapter` / `ip-adapter-plus_sdxl_vit-h.safetensors` so identity lock
