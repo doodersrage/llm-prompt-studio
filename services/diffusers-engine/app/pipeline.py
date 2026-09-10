@@ -3948,8 +3948,9 @@ class PipelineHolder:
     ) -> Image.Image:
         """Native Flux / Flux2-Klein from drop-in UNET + TE + VAE (+ LoRA).
         Classic Flux ControlNet supports txt2img / img2img / inpaint via
-        FluxControlNet*Pipeline (± stacked Multi / same-file Union modes);
-        Klein ControlNet stays unsupported.
+        FluxControlNet*Pipeline (± stacked Multi / same-file Union modes).
+        Flux2-Klein inpaint uses Flux2KleinInpaintPipeline; Klein ControlNet
+        and plain (no-mask) img2img stay unsupported.
         """
         import torch
 
@@ -4305,11 +4306,52 @@ class PipelineHolder:
             finally:
                 self._empty_cuda()
 
-        if use_inpaint and klein_distilled:
-            raise RuntimeError(
-                "Flux2-Klein inpaint is not supported yet (no mask-capable "
-                "pipeline for Klein) — use ComfyUI for this workflow."
+        run_pipe = pipe
+        if use_inpaint:
+            from app.dropin_loaders import is_flux_klein_unet
+            from diffusers import Flux2KleinInpaintPipeline, FluxInpaintPipeline
+
+            is_klein = (
+                klein_distilled
+                or is_flux_klein_unet(Path(unet_path).name)
+                or (clip_type or "").lower() == "flux2"
+                or type(pipe).__name__.startswith("Flux2Klein")
             )
+            if is_klein:
+                run_pipe = Flux2KleinInpaintPipeline.from_pipe(pipe)
+            else:
+                run_pipe = FluxInpaintPipeline.from_pipe(pipe)
+            run_pipe = self._place_compiled_pipe(
+                run_pipe,
+                torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                prefer_offload=True,
+                pixel_count=max(1, int(width) * int(height)),
+            )
+        elif use_img2img:
+            from app.dropin_loaders import is_flux_klein_unet
+            from diffusers import FluxImg2ImgPipeline
+
+            is_klein = (
+                klein_distilled
+                or is_flux_klein_unet(Path(unet_path).name)
+                or (clip_type or "").lower() == "flux2"
+                or type(pipe).__name__.startswith("Flux2Klein")
+            )
+            if is_klein:
+                # Flux2KleinPipeline.image is KV/edit conditioning, not strength
+                # img2img — Diffusers has no Flux2KleinImg2ImgPipeline yet.
+                raise RuntimeError(
+                    "Flux2-Klein plain img2img (denoise without mask) is not "
+                    "supported yet — use inpaint with a mask, or ComfyUI."
+                )
+            run_pipe = FluxImg2ImgPipeline.from_pipe(pipe)
+            run_pipe = self._place_compiled_pipe(
+                run_pipe,
+                torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                prefer_offload=True,
+                pixel_count=max(1, int(width) * int(height)),
+            )
+
         init_image = None
         mask_image = None
         if use_img2img:
@@ -4337,7 +4379,7 @@ class PipelineHolder:
         try:
             import inspect
 
-            sig = inspect.signature(pipe.__call__)
+            sig = inspect.signature(run_pipe.__call__)
             if "guidance_scale" in sig.parameters:
                 kwargs["guidance_scale"] = cfg
             if "true_cfg_scale" in sig.parameters and cfg > 1.0:
@@ -4355,6 +4397,8 @@ class PipelineHolder:
                     "Flux inpaint requires a pipeline that accepts mask_image; "
                     "this checkpoint only supports full-image img2img via Diffusers."
                 )
+            if "strength" in kwargs and "strength" not in sig.parameters:
+                kwargs.pop("strength")
         except RuntimeError:
             raise
         except Exception:
@@ -4376,7 +4420,7 @@ class PipelineHolder:
             flush=True,
         )
         try:
-            result = pipe(**kwargs)
+            result = run_pipe(**kwargs)
             return result.images[0]
         except Exception:
             # OOM / hook corruption can poison the cached offloaded pipe.

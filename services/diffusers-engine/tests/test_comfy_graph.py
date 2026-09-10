@@ -1271,7 +1271,7 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertEqual(result.compiled.img2img_mode, "inpaint")
         self.assertEqual(result.compiled.mask_image, "mask.png")
 
-    def test_flux_klein_inpaint_unsupported(self) -> None:
+    def test_compiles_flux_klein_inpaint(self) -> None:
         graph = _flux_graph()
         graph["2"]["inputs"]["type"] = "flux2"
         graph = self._inpaint_graph(
@@ -1279,11 +1279,13 @@ class ComfyGraphTests(unittest.TestCase):
             vae_link=["3", 0], ksampler_id="8",
         )
         result = compile_workflow(graph)
-        self.assertFalse(result.supported)
-        self.assertIn("Klein", result.reason)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "inpaint")
+        self.assertEqual(result.compiled.mask_image, "mask.png")
 
-    def test_flux_klein_img2img_still_supported(self) -> None:
-        # Only inpaint (mask) is blocked for Klein — plain img2img stays allowed.
+    def test_flux_klein_img2img_unsupported(self) -> None:
+        # Klein's pipeline `image` arg is KV/edit conditioning — no strength img2img.
         graph = _flux_graph()
         graph["2"]["inputs"]["type"] = "flux2"
         graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
@@ -1294,9 +1296,8 @@ class ComfyGraphTests(unittest.TestCase):
         graph["8"]["inputs"]["latent_image"] = ["21", 0]
         graph["8"]["inputs"]["denoise"] = 0.55
         result = compile_workflow(graph)
-        self.assertTrue(result.supported, result.reason)
-        assert result.compiled is not None
-        self.assertEqual(result.compiled.img2img_mode, "img2img")
+        self.assertFalse(result.supported)
+        self.assertIn("Klein", result.reason)
 
 
 if __name__ == "__main__":

@@ -783,15 +783,22 @@ def compile_workflow(graph: dict[str, Any]) -> ClassifyResult:
             family=family,
             reason=f"{family} workflow missing UNETLoader/checkpoint.",
         )
+    # Flux2-Klein inpaint uses Diffusers Flux2KleinInpaintPipeline (0.39+).
+    # Plain img2img (no mask) stays unsupported — Klein's `image` arg is KV/edit
+    # conditioning, and there is no Flux2KleinImg2ImgPipeline yet.
+    # ControlNet on Klein stays unsupported (no vetted CN pipeline).
     if (
-        img2img_mode == "inpaint"
+        img2img_mode == "img2img"
         and family == "flux"
         and _is_flux_klein(clip_type, unet)
     ):
         return ClassifyResult(
             supported=False,
             family=family,
-            reason="Flux2-Klein inpaint has no mask-capable pipeline yet — use ComfyUI.",
+            reason=(
+                "Flux2-Klein plain img2img has no strength pipeline yet — "
+                "use inpaint with a mask, or ComfyUI."
+            ),
         )
 
     controlnet_stack = _trace_controlnet_stack(nodes, pos_id)
