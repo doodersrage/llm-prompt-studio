@@ -30,7 +30,7 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   and IdentityNet under `controlnets/InstantID-ControlNet/` (diffusers folder with
   `config.json` + weights). First face analysis may download antelopev2 into
   `~/.insightface`. Mutually exclusive with IP-Adapter and extra ControlNetApply
-  stacks; txt2img-only for now. PuLID stays on ComfyUI.
+  stacks; txt2img and img2img (inpaint stays Comfy). PuLID stays on ComfyUI.
   - **"Union" checkpoints are auto-detected**, not assumed away. Popular general-purpose
     SDXL ControlNets (e.g. xinsir/`controlnet-union-sdxl-1.0.safetensors`) and some Flux
     ones (e.g. InstantX-style Union-Pro) pack multiple tasks into one file with an extra
@@ -83,9 +83,9 @@ Optional **stills-only** FastAPI companion for Prompt Studio (txt2img + limited 
   re-download when the drop-in is present.
 - **Inpaint now covers SDXL, classic Flux, and Qwen** (`InpaintModelConditioning` /
   `LoadImageMask`). Flux2-Klein inpaint stays unsupported — no mask-capable pipeline for it.
-- **Still not attempted: InstantID / PuLID / FaceDetailer.** InstantID needs
-  InsightFace + a face ControlNet; PuLID (Flux) needs EVA-CLIP + attention hooks;
-  FaceDetailer is Impact Pack. Keep those on ComfyUI.
+- **Still not attempted: PuLID / FaceDetailer.** PuLID (Flux) needs EVA-CLIP +
+  attention hooks; FaceDetailer is Impact Pack. Keep those on ComfyUI.
+  InstantID is native for SDXL (txt2img + img2img) — see InstantID note above.
 - **SDXL IP-Adapter identity lock is native.** `IPAdapterModelLoader` →
   `IPAdapterAdvanced` → `LoadImage` compiles on SDXL via Diffusers
   `IPAdapterMixin`. Classic Plus weights load locally; Comfy FaceID/PuLID-SDXL

@@ -2105,8 +2105,8 @@ class PipelineHolder:
 
         Supported combinations (SDXL):
         - txt2img / img2img / inpaint ± ControlNet ± IP-Adapter
-        - InstantID identity lock (txt2img; mutually exclusive with IP-Adapter /
-          extra ControlNetApply stacks)
+        - InstantID identity lock (txt2img / img2img; mutually exclusive with
+          IP-Adapter / extra ControlNetApply stacks; inpaint stays Comfy)
         """
         import torch
         from diffusers import (
@@ -2244,10 +2244,10 @@ class PipelineHolder:
         )
 
         if use_instantid:
-            if use_img2img:
+            if use_inpaint:
                 raise RuntimeError(
-                    "InstantID + img2img/inpaint is not supported yet — use "
-                    "txt2img InstantID or ComfyUI."
+                    "InstantID + inpaint is not supported yet — use "
+                    "txt2img/img2img InstantID or ComfyUI."
                 )
             if use_controlnet or use_ip_adapter:
                 raise RuntimeError(
@@ -2255,9 +2255,6 @@ class PipelineHolder:
                     "in the Diffusers engine — use one identity path."
                 )
             from diffusers import ControlNetModel
-            from app.pipeline_stable_diffusion_xl_instantid import (
-                StableDiffusionXLInstantIDPipeline,
-            )
             from app.instantid_face import extract_face_embedding_and_kps
 
             face_image = Image.open(instantid_image_path).convert("RGB")
@@ -2285,9 +2282,22 @@ class PipelineHolder:
                 self._controlnet_key = cn_key
 
             self._clear_sdxl_ip_adapter(pipe)
-            iid_pipe = StableDiffusionXLInstantIDPipeline.from_pipe(
-                pipe, controlnet=self._controlnet_model
-            )
+            if use_img2img:
+                from app.pipeline_stable_diffusion_xl_instantid_img2img import (
+                    StableDiffusionXLInstantIDImg2ImgPipeline,
+                )
+
+                iid_pipe = StableDiffusionXLInstantIDImg2ImgPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
+            else:
+                from app.pipeline_stable_diffusion_xl_instantid import (
+                    StableDiffusionXLInstantIDPipeline,
+                )
+
+                iid_pipe = StableDiffusionXLInstantIDPipeline.from_pipe(
+                    pipe, controlnet=self._controlnet_model
+                )
             iid_key = f"instantid-adapter:{instantid_path}"
             if getattr(self, "_instantid_adapter_key", None) != iid_key:
                 print(
@@ -2303,53 +2313,82 @@ class PipelineHolder:
                 if not hasattr(iid_pipe, "image_proj_model"):
                     iid_pipe.load_ip_adapter_instantid(instantid_path)
 
-            strength = float(instantid_strength)
-            iid_pipe.set_ip_adapter_scale(strength)
+            iid_scale = float(instantid_strength)
+            iid_pipe.set_ip_adapter_scale(iid_scale)
             iid_pipe = self._place_compiled_pipe(iid_pipe, torch.float16)
 
             import torch as _torch
 
-            emb = _torch.from_numpy(face_emb).to(device=device_for_gen, dtype=_torch.float16)
+            emb = _torch.from_numpy(face_emb).to(
+                device=device_for_gen, dtype=_torch.float16
+            )
             if emb.ndim == 1:
                 emb = emb.unsqueeze(0)
 
             iid_kwargs: dict[str, Any] = {
                 "image_embeds": emb,
-                "image": face_kps,
-                "controlnet_conditioning_scale": strength,
+                "controlnet_conditioning_scale": iid_scale,
                 "num_inference_steps": plan.steps,
                 "guidance_scale": plan.guidance_scale,
                 "generator": generator,
                 "guidance_rescale": 0.7,
-                "width": gen_width,
-                "height": gen_height,
-                "output_type": "latent",
             }
+            if use_img2img:
+                init = Image.open(init_image_path).convert("RGB")
+                init = init.resize((gen_width, gen_height), Image.Resampling.LANCZOS)
+                # Img2Img InstantID: image=init, control_image=keypoints.
+                iid_kwargs["image"] = init
+                iid_kwargs["control_image"] = face_kps
+                iid_kwargs["strength"] = strength
+            else:
+                # Txt2img InstantID: image=keypoints (ControlNet condition).
+                iid_kwargs["image"] = face_kps
+                iid_kwargs["width"] = gen_width
+                iid_kwargs["height"] = gen_height
+                iid_kwargs["output_type"] = "latent"
             iid_kwargs.update(encode_kwargs)
+            mode_label = "instantid+img2img" if use_img2img else "instantid"
             print(
-                f"[diffusers] compiled-sdxl instantid "
+                f"[diffusers] compiled-sdxl {mode_label} "
                 f"model={path.name} adapter={Path(instantid_path).name} "
                 f"{gen_width}x{gen_height} steps={plan.steps} "
-                f"cfg={plan.guidance_scale} strength={strength:.2f}",
+                f"cfg={plan.guidance_scale} iid={iid_scale:.2f}"
+                + (f" denoise={strength:.2f}" if use_img2img else ""),
                 flush=True,
             )
             try:
                 with _silence_model_warnings():
                     result = iid_pipe(**iid_kwargs)
-                image = self._decode_latents_fp32(iid_pipe, result.images)
+                image = (
+                    result.images[0]
+                    if use_img2img
+                    else self._decode_latents_fp32(iid_pipe, result.images)
+                )
             except torch.cuda.OutOfMemoryError:
                 self._empty_cuda()
-                iid_kwargs["width"] = 768
-                iid_kwargs["height"] = 768
-                iid_kwargs["image"] = face_kps.resize(
-                    (768, 768), Image.Resampling.LANCZOS
-                )
+                if use_img2img:
+                    iid_kwargs["image"] = init.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                    iid_kwargs["control_image"] = face_kps.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
+                else:
+                    iid_kwargs["width"] = 768
+                    iid_kwargs["height"] = 768
+                    iid_kwargs["image"] = face_kps.resize(
+                        (768, 768), Image.Resampling.LANCZOS
+                    )
                 iid_kwargs["generator"] = torch.Generator(
                     device=device_for_gen
                 ).manual_seed(int(seed) & 0xFFFFFFFF)
                 with _silence_model_warnings():
                     result = iid_pipe(**iid_kwargs)
-                image = self._decode_latents_fp32(iid_pipe, result.images)
+                image = (
+                    result.images[0]
+                    if use_img2img
+                    else self._decode_latents_fp32(iid_pipe, result.images)
+                )
             finally:
                 self._empty_cuda()
             if on_step:

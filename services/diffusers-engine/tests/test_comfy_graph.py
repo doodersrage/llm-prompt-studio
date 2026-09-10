@@ -563,6 +563,80 @@ class ComfyGraphTests(unittest.TestCase):
         self.assertAlmostEqual(result.compiled.instantid_strength, 0.8)
         self.assertIsNone(result.compiled.instantid_controlnet)
 
+    def test_compiles_sdxl_instantid_img2img(self) -> None:
+        graph = _sdxl_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "InstantIDModelLoader",
+            "inputs": {"instantid_file": "ip-adapter.bin"},
+        }
+        graph["52"] = {
+            "class_type": "ApplyInstantID",
+            "inputs": {
+                "model": ["1", 0],
+                "instantid": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.75,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["52", 0]
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["20", 0], "vae": ["1", 2]},
+        }
+        graph["5"]["inputs"]["latent_image"] = ["21", 0]
+        graph["5"]["inputs"]["denoise"] = 0.55
+        result = compile_workflow(graph)
+        self.assertTrue(result.supported, result.reason)
+        assert result.compiled is not None
+        self.assertEqual(result.compiled.img2img_mode, "img2img")
+        self.assertEqual(result.compiled.instantid_image, "face-ref.png")
+
+    def test_instantid_inpaint_unsupported(self) -> None:
+        graph = _sdxl_graph()
+        graph["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": "face-ref.png"},
+        }
+        graph["51"] = {
+            "class_type": "InstantIDModelLoader",
+            "inputs": {"instantid_file": "ip-adapter.bin"},
+        }
+        graph["52"] = {
+            "class_type": "ApplyInstantID",
+            "inputs": {
+                "model": ["1", 0],
+                "instantid": ["51", 0],
+                "image": ["50", 0],
+                "weight": 0.8,
+            },
+        }
+        graph["5"]["inputs"]["model"] = ["52", 0]
+        graph["20"] = {"class_type": "LoadImage", "inputs": {"image": "init.png"}}
+        graph["21"] = {"class_type": "LoadImage", "inputs": {"image": "mask.png"}}
+        graph["22"] = {
+            "class_type": "InpaintModelConditioning",
+            "inputs": {
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "vae": ["1", 2],
+                "pixels": ["20", 0],
+                "mask": ["21", 0],
+                "noise_mask": True,
+            },
+        }
+        graph["5"]["inputs"]["positive"] = ["22", 0]
+        graph["5"]["inputs"]["negative"] = ["22", 1]
+        graph["5"]["inputs"]["latent_image"] = ["22", 2]
+        graph["5"]["inputs"]["denoise"] = 0.7
+        result = compile_workflow(graph)
+        self.assertFalse(result.supported)
+        self.assertIn("inpaint", result.reason.lower())
+
     def test_instantid_with_ip_adapter_unsupported(self) -> None:
         graph = _sdxl_graph()
         graph["50"] = {
