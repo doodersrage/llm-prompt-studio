@@ -5103,9 +5103,11 @@ class PipelineHolder:
                 flush=True,
             )
             step_count = target
-        # Keep caller canvas; only bump tiny sizes. Avoid extreme tall bias (mutant limbs).
+        edit_paths = [p for p in (qwen_edit_image_paths or []) if p]
+        # Keep caller canvas; only bump tiny sizes for plain txt2img.
+        # Edit / edit-inpaint keep the requested canvas (ref-driven).
         gen_width, gen_height = int(width), int(height)
-        if min(gen_width, gen_height) < 768:
+        if not edit_paths and min(gen_width, gen_height) < 768:
             gen_width = max(gen_width, 768)
             gen_height = max(gen_height, 1024)
         gen_width = max(64, (gen_width // 16) * 16)
@@ -5136,7 +5138,7 @@ class PipelineHolder:
         use_inpaint = (
             use_img2img and img2img_mode == "inpaint" and mask_image_path is not None
         )
-        edit_paths = [p for p in (qwen_edit_image_paths or []) if p]
+        # edit_paths already resolved above for canvas sizing
         if edit_paths:
             if use_controlnet:
                 raise RuntimeError(
@@ -5219,13 +5221,46 @@ class PipelineHolder:
                     "Qwen Edit pipeline has no text_encoder/encode_prompt."
                 )
             try:
-                self._bulk_module_to_cuda(te, torch.device("cuda"))
-                prompt_embeds, prompt_embeds_mask = edit_pipe.encode_prompt(
-                    prompt=shaped_prompt,
-                    image=image_arg,
-                    device=torch.device("cuda"),
-                    num_images_per_prompt=1,
-                )
+                te_need = self._module_footprint_mb(te)
+                free_mb = self._cuda_free_mb()
+                act_headroom = 6000.0
+                encode_device = torch.device("cuda")
+                if te_need > 0 and free_mb < te_need + act_headroom:
+                    print(
+                        f"[diffusers] Qwen Edit TE encode on CPU "
+                        f"(need≈{te_need:.0f}+{act_headroom:.0f}MiB "
+                        f"free≈{free_mb:.0f}MiB)",
+                        flush=True,
+                    )
+                    encode_device = torch.device("cpu")
+                else:
+                    self._bulk_module_to_cuda(te, torch.device("cuda"))
+                    print(
+                        f"[diffusers] Qwen Edit TE encode on CUDA "
+                        f"(TE≈{te_need:.0f}MiB free≈{free_mb:.0f}MiB)",
+                        flush=True,
+                    )
+                try:
+                    prompt_embeds, prompt_embeds_mask = edit_pipe.encode_prompt(
+                        prompt=shaped_prompt,
+                        image=image_arg,
+                        device=encode_device,
+                        num_images_per_prompt=1,
+                    )
+                except torch.cuda.OutOfMemoryError:
+                    print(
+                        "[diffusers] Qwen Edit TE CUDA OOM; retrying on CPU",
+                        flush=True,
+                    )
+                    self._force_module_cpu(te)
+                    self._empty_cuda()
+                    encode_device = torch.device("cpu")
+                    prompt_embeds, prompt_embeds_mask = edit_pipe.encode_prompt(
+                        prompt=shaped_prompt,
+                        image=image_arg,
+                        device=encode_device,
+                        num_images_per_prompt=1,
+                    )
                 negative_prompt_embeds = None
                 negative_prompt_embeds_mask = None
                 if shaped_negative.strip() and cfg > 1.01:
@@ -5233,10 +5268,24 @@ class PipelineHolder:
                         edit_pipe.encode_prompt(
                             prompt=shaped_negative,
                             image=image_arg,
-                            device=torch.device("cuda"),
+                            device=encode_device,
                             num_images_per_prompt=1,
                         )
                     )
+                if encode_device.type == "cpu" and torch.cuda.is_available():
+                    prompt_embeds = prompt_embeds.to(
+                        device="cuda", dtype=torch.bfloat16
+                    )
+                    if prompt_embeds_mask is not None:
+                        prompt_embeds_mask = prompt_embeds_mask.to(device="cuda")
+                    if negative_prompt_embeds is not None:
+                        negative_prompt_embeds = negative_prompt_embeds.to(
+                            device="cuda", dtype=torch.bfloat16
+                        )
+                        if negative_prompt_embeds_mask is not None:
+                            negative_prompt_embeds_mask = (
+                                negative_prompt_embeds_mask.to(device="cuda")
+                            )
             finally:
                 self._force_module_cpu(te)
                 self._empty_cuda()
