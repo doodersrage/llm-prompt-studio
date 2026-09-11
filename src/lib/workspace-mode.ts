@@ -1,8 +1,10 @@
 import { readBrowserString, writeBrowserString } from './browser-storage';
 import {
+  APP_NAV_EXTRAS_GROUP_LABEL,
   APP_NAV_GROUPS,
   APP_NAV_SETTINGS_LINK,
   flattenAppNavLinks,
+  isParkedNavHref,
   type AppNavGroup,
   type AppNavLink,
 } from './app-nav-catalog';
@@ -33,20 +35,20 @@ export const WORKSPACE_MODE_OPTIONS: {
   description: string;
 }[] = [
   {
+    id: 'play',
+    label: 'Play',
+    description:
+      'Campaign, Moodboard, Fitting, Day, Roleplay, Gallery, and Queue — the flagship film loop.',
+  },
+  {
     id: 'simple',
     label: 'Simple',
     description: 'Essentials in the sidebar; advanced tools under More. Lean shared controls.',
   },
   {
-    id: 'play',
-    label: 'Play',
-    description:
-      'Campaign, Moodboard, Fitting, Day, Roleplay, Gallery, and Queue — lean chrome for story loops.',
-  },
-  {
     id: 'studio',
     label: 'Studio',
-    description: 'Full catalog in Edit / Media / Library groups. Collapsed advanced controls.',
+    description: 'Full catalog in Edit / Media / Library / Extras. Collapsed advanced controls.',
   },
   {
     id: 'full',
@@ -130,12 +132,13 @@ export function normalizeWorkspaceMode(value: unknown): WorkspaceMode {
   if (value === 'simple' || value === 'play' || value === 'studio' || value === 'full') {
     return value;
   }
-  return 'simple';
+  // First-run / unknown → Play (flagship Cast → Moodboard → Fitting → Day → Roleplay loop).
+  return 'play';
 }
 
 export function loadWorkspaceMode(): WorkspaceMode {
   if (typeof window === 'undefined') {
-    return 'simple';
+    return 'play';
   }
   return normalizeWorkspaceMode(readBrowserString(MODE_KEY));
 }
@@ -257,7 +260,10 @@ export function navGroupsForWorkspaceMode(
     const moreRest = flat.filter(
       link => !essentialKeys.has(link.href) && !morePreferred.some(item => item.href === link.href)
     );
-    const more = [...morePreferred, ...moreRest];
+    // Parked specialty tools stay reachable but sort last under More.
+    const moreActive = moreRest.filter(link => !isParkedNavHref(link.href));
+    const moreParked = moreRest.filter(link => isParkedNavHref(link.href));
+    const more = [...morePreferred, ...moreActive, ...moreParked];
     const groups: AppNavGroup[] = [{ label: 'Essentials', links: essentials }];
     if (more.length > 0) {
       groups.push({ label: 'More tools', links: more });
@@ -310,8 +316,10 @@ export function defaultExpandedNavGroups(mode: WorkspaceMode, groups: AppNavGrou
   if (mode === 'full') {
     return groups.map(group => group.label);
   }
-  // Studio: keep Media collapsed by default to reduce noise.
-  return groups.map(group => group.label).filter(label => label !== 'Media');
+  // Studio: keep Media + parked Extras collapsed by default to reduce noise.
+  return groups
+    .map(group => group.label)
+    .filter(label => label !== 'Media' && label !== APP_NAV_EXTRAS_GROUP_LABEL);
 }
 
 export function workspaceShowsAdvancedControls(mode: WorkspaceMode): boolean {

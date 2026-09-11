@@ -7,9 +7,11 @@ setup time, and it's easy to miss when it's scattered across a dozen feature bul
 
 ## Generation engines
 
-- **Diffusers is stills-only.** txt2img/img2img through the optional Diffusers
-  sidecar works, but Play film (Day, Roleplay clips, Cast video) always routes
-  through ComfyUI or a cloud engine — Diffusers has no video path.
+- **Diffusers is an optional stills sidecar — not the product bet.** txt2img/img2img
+  through Diffusers works for stills, but Play film (Day, Roleplay clips, Cast video)
+  always routes through ComfyUI or a cloud engine. Further Diffusers parity beyond the
+  documented stills surface is **parked**; hard non-goals (PuLID, FaceDetailer, Dynamic
+  VRAM, Boogu/GGUF, video, etc.) stay on Comfy.
 - **Cloud clip support varies by provider.** Fal, Replicate, Grok, Gemini, and
   Runway can queue clips (T2V/I2V/extend, provider-dependent); ChatGPT is stills
   only. Check a provider's row in the model tables before assuming clip support.
@@ -23,6 +25,13 @@ setup time, and it's easy to miss when it's scattered across a dozen feature bul
   through a documented multi-ref edit model (Fal Kontext multi, FLUX.2 edit,
   nano-banana edit, or Replicate's multi-image Kontext) — otherwise transfer stays
   blocked rather than silently degrading to single-image behavior.
+
+## Specialty tools (parked)
+
+- **Topics, Audio, Mesh, Logo, and legacy Pet/Fantasy/Background pages are parked.**
+  They remain reachable via ⌘K / direct URL / Character page switcher, but live under
+  the sidebar **Extras** group (collapsed by default in Studio). The flagship product
+  surface is the Play film loop plus Generate / Edit / Video / Gallery.
 
 ## Backup and data
 
@@ -42,20 +51,13 @@ setup time, and it's easy to miss when it's scattered across a dozen feature bul
 - **No SSO/OAuth.** Accounts are username + password, optionally with TOTP 2FA.
   There's no external identity provider integration if that's a requirement for
   your deployment.
-- **The session secret has a fallback, and the fallback is insecure.** If
-  `PROMPT_AUTH_ENABLED=true` and `PROMPT_SESSION_SECRET` (and `PROMPT_API_TOKEN`)
-  are both unset, session cookies sign with a hardcoded string from the public
-  source — the server now warns loudly about this at startup and in Settings →
-  Overview, but it's worth knowing the failure mode exists at all rather than
-  assuming auth-on always means secure-by-default.
-- **The default admin account stays on a well-known password until you change
-  it.** If `PROMPT_AUTH_ENABLED=true` and `PROMPT_ADMIN_PASSWORD` is left unset,
-  the bootstrap admin user is kept in sync with the literal default password
-  ("admin") baked into this open-source repo on every server start. The server
-  now warns loudly about this too (startup log and Settings → Overview) — but
-  default credentials are the single most common way a self-hosted app like
-  this actually gets compromised, so set `PROMPT_ADMIN_PASSWORD` before this
-  is reachable beyond localhost.
+- **Auth-off is localhost-only.** Network-exposed signals (`PROMPT_EXPOSED`,
+  all-interfaces bind, or a non-loopback `PROMPT_API_URL`) fail startup unless
+  auth is enabled with real secrets (or `PROMPT_ALLOW_INSECURE_AUTH=1`).
+- **Auth-on refuses insecure defaults.** If `PROMPT_AUTH_ENABLED=true` without
+  `PROMPT_SESSION_SECRET` / `PROMPT_API_TOKEN` or without `PROMPT_ADMIN_PASSWORD`,
+  the process exits at instrumentation time instead of signing cookies with a
+  hardcoded secret or keeping the bootstrap admin on `"admin"`.
 
 ## Testing and platform
 

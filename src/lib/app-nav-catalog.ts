@@ -11,6 +11,9 @@ export type AppNavGroup = {
   links: AppNavLink[];
 };
 
+/** Sidebar group for soft-deprecated specialty tools (still reachable via ⌘K / direct URL). */
+export const APP_NAV_EXTRAS_GROUP_LABEL = 'Extras';
+
 export const APP_NAV_GROUPS: AppNavGroup[] = [
   {
     label: 'Overview',
@@ -31,7 +34,6 @@ export const APP_NAV_GROUPS: AppNavGroup[] = [
       { href: '/format', label: 'Format', description: 'Draft → model-ready' },
       { href: '/prompt', label: 'Prompt Editor', description: 'Edit & optimize' },
       { href: '/lint', label: 'Lint', description: 'Diagnostics & fix' },
-      { href: '/topics', label: 'Topics', description: 'Idea list' },
     ],
   },
   {
@@ -101,12 +103,7 @@ export const APP_NAV_GROUPS: AppNavGroup[] = [
   },
   {
     label: 'Media',
-    links: [
-      { href: '/video', label: 'Video', description: 'Motion prompts' },
-      { href: '/audio', label: 'Audio', description: 'Sound / music prompts' },
-      { href: '/mesh', label: '3D Mesh', description: 'Image → mesh prompts' },
-      { href: '/logo', label: 'Logo', description: 'SVG marks & raster logo prompts' },
-    ],
+    links: [{ href: '/video', label: 'Video', description: 'Motion prompts' }],
   },
   {
     label: 'Library',
@@ -115,6 +112,31 @@ export const APP_NAV_GROUPS: AppNavGroup[] = [
       { href: '/gallery', label: 'Gallery', description: 'ComfyUI outputs' },
       { href: '/variations', label: 'Variations', description: 'Grid queue and matrix sweeps' },
       { href: '/plugins', label: 'Plugins', description: 'Runtime manifests and nav bookmarks' },
+    ],
+  },
+  {
+    label: APP_NAV_EXTRAS_GROUP_LABEL,
+    links: [
+      {
+        href: '/topics',
+        label: 'Topics',
+        description: 'Idea list — parked specialty; prefer Generate / Play',
+      },
+      {
+        href: '/audio',
+        label: 'Audio',
+        description: 'Sound / music prompts — parked specialty tool',
+      },
+      {
+        href: '/mesh',
+        label: '3D Mesh',
+        description: 'Image → mesh prompts — parked specialty tool',
+      },
+      {
+        href: '/logo',
+        label: 'Logo',
+        description: 'SVG marks & raster logo prompts — parked specialty tool',
+      },
     ],
   },
 ];
@@ -141,6 +163,22 @@ export const APP_NAV_SCENE_ALIASES: AppNavLink[] = [
   { href: '/pet', label: 'Pet (scene)', description: 'Dogs, cats & more — opens Pet tool' },
   { href: '/fantasy', label: 'Fantasy (scene)', description: 'Magic & myth — opens Fantasy tool' },
 ];
+
+/** Soft-deprecated specialty hrefs (Extras group + legacy scene aliases). */
+export const APP_NAV_PARKED_HREFS = [
+  '/topics',
+  '/audio',
+  '/mesh',
+  '/logo',
+  '/pet',
+  '/fantasy',
+  '/background',
+] as const;
+
+export function isParkedNavHref(href: string): boolean {
+  const path = href.split('?')[0] || '/';
+  return (APP_NAV_PARKED_HREFS as readonly string[]).includes(path);
+}
 
 export function flattenAppNavLinks(
   groups: AppNavGroup[] = APP_NAV_GROUPS,

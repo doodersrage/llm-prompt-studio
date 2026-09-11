@@ -38,7 +38,7 @@ Jump to: [Prompt generation](#prompt-generation) · [Scene tools](#scene-tools) 
 ## Scene tools & catalogs {#scene-tools}
 
 - **Mobile Studio** — `/m` (Add to Home Screen via `manifest-mobile.json`): **phone-first film loop** — Capture → Queue → Rate → **Moodboard → Fitting → Day → Play**. Touch shells on `/m/moodboard`, `/m/fitting`, `/m/day`, and `/m/play` reuse desk orchestration (swipe kits, four Day slots, Roleplay stills **and** clips via I2V/T2V/continue). **Cut film** / **Save to Cast** are primary on phone (shared assembler, server ffmpeg preferred). Header **Desk** bridge is an optional large-screen handoff (Campaign / Board / Day / Fitting).
-- **Play workspace** — sidebar footer / Profile → Appearance: Cast, Fitting Room, Day Planner, Roleplay, Gallery, and Queue (Play mode label in workspace picker). Roleplay routes use a lean rail. Moodboard lives under Scene nav and ⌘K. Default for a film-first loop; Simple remains the first-run default.
+- **Play workspace** (first-run default) — sidebar footer / Profile → Appearance: Cast, Fitting Room, Day Planner, Roleplay, Gallery, and Queue. Roleplay routes use a lean rail. Moodboard lives under Scene nav and ⌘K. Simple remains available for a lean essentials layout.
 - **Simple Essentials** — Dashboard, Generate, Cast, Roleplay, Gallery, and Queue; Studio, Video, Refine, Compose, Inpaint, Fitting, Day, Moodboard, and the rest sit under More tools (⌘K finds everything).
 - **Gallery collections** — bulk **Collect** (favorite/rate), **Group** (named batches), and **Project** (campaign scope); tags are under Project in full mode only.
 - **Lean gallery** — Simple and Roleplay workspace modes use slimmer filters and bulk actions on `/gallery`.
@@ -205,8 +205,8 @@ Jump to: [Prompt generation](#prompt-generation) · [Scene tools](#scene-tools) 
 - **Workflow diff** — Settings compares two workflow JSON files
 - **Workflow node auto-map** — suggested positive/negative bindings while editing workflow JSON
 - **Video prompt builder** — `/video` + local WAN / Hunyuan / LTX, or Fal / Replicate / Grok / Gemini / Runway clips (T2V, I2V, extend). I2V **Scan with vision** fills Subject and Motion from the first frame. Extend chip: **Extend clip** (Fal LTX / Grok extensions / Runway Aleph video-to-video), **Continue from last frame** (Replicate; Fal upload soft-fail), or **Stitch continue** (Gemini + `/api/film/assemble`). ChatGPT warns before queue. Compact **Video model files** Install rows download WAN / Hunyuan Video / LTX weights into `COMFYUI_ROOT`.
-- **Logo builder** — `/logo` instant SVG mark export (monogram, studio bars, viewport, geometric) from brand name + colors — no GPU. Optional **Generate raster prompt** queues a still for icon / wordmark refinement in ComfyUI or cloud.
-- **Audio / mesh model files** — `/audio` and `/mesh` (and Settings → ComfyUI → Model assets) Install Stable Audio Open 1.0 + T5-Base, and Hunyuan3D 2.0 DiT (single-view, multi-view, turbo) into `checkpoints/` / `text_encoders/`.
+- **Logo / Audio / Mesh (parked Extras)** — `/logo`, `/audio`, and `/mesh` remain available under the sidebar **Extras** group (and ⌘K) but are soft-deprecated specialty tools. Prefer Play + Video for motion; Character page covers pet/fantasy/environment without the legacy `/pet` `/fantasy` `/background` routes (those stay palette aliases).
+- **Audio / mesh model files** — Settings → ComfyUI → Model assets can still Install Stable Audio Open 1.0 + T5-Base, and Hunyuan3D 2.0 DiT into `checkpoints/` / `text_encoders/` when using the parked tools.
 - **Refine vision scan** — `/refine` **Scan with vision** fills Current prompt from the reference still (same pattern as Video I2V), then intent + Refine.
 - **Vision scan on still tools** — Inpaint, Outpaint, Compose (Image 1), ControlNet, and Roleplay From photo share **Scan with vision** next to Choose from Gallery. Compose also has **Scan all images → instruction** for multi-slot transfer recipes.
 - **Tool-locked model pickers** — Video stays on WAN / Hunyuan / LTX; Inpaint / Outpaint / Compose / Refine / From photo stay on edit/img2img. Show all is hidden on video/audio/mesh.
@@ -285,7 +285,7 @@ Jump to: [Prompt generation](#prompt-generation) · [Scene tools](#scene-tools) 
 
 ## UI & UX {#ui-ux}
 
-- **Workspace modes** — Simple (default), Play, Studio, or Full from the sidebar footer or Profile → Appearance; the saved mode is applied on first paint
+- **Workspace modes** — Play (first-run default), Simple, Studio, or Full from the sidebar footer or Profile → Appearance; the saved mode is applied on first paint
 - **Unified first-run path** — Welcome, Settings Heal, and first-queue modal share dismiss state; onboarding leads with Comfy → workflows → Generate (`/?source=random`) before optional LLM
 - **Post-Heal checklist** — Connection first-run card lists Generate → Queue → Gallery review after Heal succeeds
 - **Active jobs chip** — sidebar and mobile header show live queue count with a deep link to `/queue`

@@ -4,26 +4,30 @@ Environment variables, security, production checklist, and Docker. For Heal & re
 
 ## Security notes
 
-This app is designed for a **trusted local / LAN** setup. By default the HTTP API is open (CORS `*`) so ComfyUI custom nodes and CLI tools can call it.
+This app is designed for a **trusted local / LAN** setup. By default the HTTP API is open (CORS `*`) so ComfyUI custom nodes and CLI tools can call it. **Auth-off is localhost-only.**
 
 When exposing beyond localhost:
 
-1. Set `PROMPT_AUTH_ENABLED=true` (or create users under `PROMPT_DATA_DIR/auth/`) and sign in — default admin username/password come from `PROMPT_ADMIN_USERNAME` / `PROMPT_ADMIN_PASSWORD` (defaults: `admin` / `admin`; change immediately).
-2. Set `PROMPT_API_TOKEN` — cross-origin and non-browser clients must send `Authorization: Bearer <token>` (same-origin UI still works). ComfyUI nodes read the same token from `PROMPT_API_TOKEN`. Service tokens bypass user login but should be kept secret.
-3. Set `COMFYUI_ALLOW_CLIENT_URL=false` so callers cannot override the ComfyUI base URL (SSRF). Prefer `COMFYUI_ALLOWED_HOSTS` for a hostname allowlist.
-4. Prefer binding to loopback (`127.0.0.1`) — default `docker-compose.yml` already does this. To publish beyond LAN use `docker compose --profile exposed up` (requires `PROMPT_SESSION_SECRET`, `PROMPT_ADMIN_PASSWORD`, `PROMPT_API_TOKEN`, and `PROMPT_API_URL`). Do not document or run `0.0.0.0` binds without auth.
-5. Webhook dispatch blocks private/metadata URLs unless `WEBHOOK_ALLOW_PRIVATE=true`.
-6. Set `PROMPT_API_URL` to the public origin so invite and reset emails are not `http://127.0.0.1:47832`.
+1. Set `PROMPT_AUTH_ENABLED=true` and sign in — set `PROMPT_ADMIN_USERNAME` / `PROMPT_ADMIN_PASSWORD` (there is no silent default-password path when auth is on; startup fails closed if the password env is missing).
+2. Set `PROMPT_SESSION_SECRET` to a long random string (required when auth is on — the hardcoded fallback is rejected at startup). Prefer not to reuse `PROMPT_API_TOKEN` as the session secret.
+3. Set `PROMPT_API_TOKEN` — cross-origin and non-browser clients must send `Authorization: Bearer <token>` (same-origin UI still works). ComfyUI nodes read the same token from `PROMPT_API_TOKEN`. Service tokens bypass user login but should be kept secret.
+4. Set `COMFYUI_ALLOW_CLIENT_URL=false` so callers cannot override the ComfyUI base URL (SSRF). Prefer `COMFYUI_ALLOWED_HOSTS` for a hostname allowlist.
+5. Prefer binding to loopback (`127.0.0.1`) — default `docker-compose.yml` already does this. To publish beyond LAN use `docker compose --profile exposed up` (sets `PROMPT_EXPOSED=true` and requires `PROMPT_SESSION_SECRET`, `PROMPT_ADMIN_PASSWORD`, `PROMPT_API_TOKEN`, and `PROMPT_API_URL`). Do not run `0.0.0.0` binds with auth off.
+6. Webhook dispatch blocks private/metadata URLs unless `WEBHOOK_ALLOW_PRIVATE=true`.
+7. Set `PROMPT_API_URL` to the public origin so invite and reset emails are not `http://127.0.0.1:47832`. A non-loopback `PROMPT_API_URL` is treated as network-exposed and requires auth + secrets.
+
+Startup fail-closed signals (`src/lib/bind-exposure-check.ts`): `PROMPT_EXPOSED`, bind host `0.0.0.0`/`::` (`HOSTNAME` / `HOST` / `PROMPT_BIND_HOST`), or a non-loopback `PROMPT_API_URL`. Escape hatch: `PROMPT_ALLOW_INSECURE_AUTH=1` (logs loudly; never use on a reachable network). Desktop shells (`PROMPT_DESKTOP`) are always treated as local.
 
 ## Production checklist
 
 Before exposing Prompt Studio beyond a trusted LAN:
 
-- [ ] Do not publish compose ports without `--profile exposed` (auth + secrets required)
+- [ ] Do not publish compose ports without `--profile exposed` (auth + secrets + `PROMPT_EXPOSED` required)
 - [ ] Confirm Settings → Overview shows Auth = accounts on
-- [ ] Set strong `PROMPT_ADMIN_PASSWORD` and rotate after first login - if `PROMPT_AUTH_ENABLED=true` and this is left unset, the admin account stays on the well-known default password ("admin") baked into this open-source repo, and the server logs a `[security]` warning at startup and in Settings → Overview until it's set
-- [ ] Set `PROMPT_SESSION_SECRET` (long random string; do not reuse API tokens) - if `PROMPT_AUTH_ENABLED=true` and this is left unset, session cookies fall back to a hardcoded secret from the public source, and the server logs a `[security]` warning at startup and in Settings → Overview until it's set
+- [ ] Set strong `PROMPT_ADMIN_PASSWORD` — if `PROMPT_AUTH_ENABLED=true` and this is unset, the server **refuses to start** (fail closed)
+- [ ] Set `PROMPT_SESSION_SECRET` (long random string; do not reuse API tokens) — if auth is on and this is unset, the server **refuses to start** (no hardcoded session fallback)
 - [ ] Enable `PROMPT_AUTH_ENABLED=true` and create non-admin users with blocked features as needed
+- [ ] Never set `PROMPT_ALLOW_INSECURE_AUTH=1` on a reachable network
 - [ ] Set `PROMPT_API_TOKEN` for CLI/ComfyUI nodes; issue per-user `pt_…` keys from Profile when sharing access
 - [ ] Configure SMTP (`PROMPT_SMTP_*` + `PROMPT_EMAIL_FROM`, or Settings → Users → SMTP) and send a test
 - [ ] Set `PROMPT_API_URL` to the public origin used in invite / password-reset emails
@@ -56,7 +60,7 @@ Docker Hub (`doodersrage/llm-prompt-studio`) is updated on the same release when
 Build locally:
 
 ```bash
-docker build -t qwen-image-prompt .
+docker build -t llm-prompt-studio .
 docker run --rm -p 127.0.0.1:47832:47832 \
   -e LLM_API_BASE_URL=http://host.docker.internal:11434/v1 \
   -e LLM_MODEL=dolphin-llama3 \
@@ -110,10 +114,12 @@ The generator calls any **OpenAI-compatible** chat completions API. Configure vi
 | `RUNWAY_API_KEY`                       | _(empty)_                        | Runway key when Settings → Inference engine is Runway (`RUNWAYML_API_SECRET` also accepted).                                                                                           |
 | `RUNWAY_MODEL`                         | `gen4_image`                     | Default Runway Gen-4 image model                                                                                                                                                       |
 | `PROMPT_API_URL`                       | `http://127.0.0.1:47832`         | Public origin for invite/reset links, email footers, and the server scheduled-batch runner                                                                                             |
-| `PROMPT_AUTH_ENABLED`                  | `false`                          | Enable login and feature access control                                                                                                                                                |
+| `PROMPT_AUTH_ENABLED`                  | `false`                          | Enable login and feature access control. Auth-off is localhost-only; network-exposed binds fail closed without auth.                                                                   |
 | `PROMPT_ADMIN_USERNAME`                | `admin`                          | Default admin username (seeded on first enable)                                                                                                                                        |
-| `PROMPT_ADMIN_PASSWORD`                | `admin`                          | Default admin password (change in production)                                                                                                                                          |
-| `PROMPT_SESSION_SECRET`                | _(falls back to API token)_      | HMAC secret for session cookies                                                                                                                                                        |
+| `PROMPT_ADMIN_PASSWORD`                | _(required when auth on)_        | Bootstrap admin password. When auth is on and unset, startup fails closed (no silent `"admin"` default on exposed paths).                                                              |
+| `PROMPT_SESSION_SECRET`                | _(required when auth on)_        | HMAC secret for session cookies. When auth is on and unset, startup fails closed (hardcoded fallback rejected).                                                                        |
+| `PROMPT_EXPOSED`                       | `false`                          | Marks the process as network-exposed (set by compose `--profile exposed`). With auth off, startup fails unless `PROMPT_ALLOW_INSECURE_AUTH=1`.                                         |
+| `PROMPT_ALLOW_INSECURE_AUTH`           | `false`                          | Emergency escape hatch only — never use on a reachable network.                                                                                                                        |
 | `PROMPT_AUTH_DIR`                      | _(uses `PROMPT_DATA_DIR/auth`)_  | Legacy JSON import directory (`users.json`, `groups.json`, analytics). Live auth now lives in `studio.sqlite`.                                                                         |
 | `PROMPT_DATA_DIR`                      | _(empty)_                        | Server SQLite root (`studio.sqlite`) for `/api/storage`, auth, collab rooms, SMTP overlay, queue-export overlay, and `{PROMPT_DATA_DIR}/plugins` server plugin registry |
 | `PROMPT_PLUGIN_HMAC_SECRET`            | _(empty)_                        | When set, `POST /api/plugins/server` installs must send `X-Prompt-Plugin-Signature` (hex HMAC-SHA256 of the raw body / ZIP bytes) |

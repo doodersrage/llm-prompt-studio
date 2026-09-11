@@ -32,5 +32,5 @@ export function resetUiChrome(): void {
   clearLastToolDraft();
   clearLastToolRoute();
   saveUiDensity('comfortable');
-  saveWorkspaceMode('simple');
+  saveWorkspaceMode('play');
 }

@@ -150,8 +150,8 @@ export default function WorkspaceWelcome() {
               ))}
             </div>
             <div className="mt-4 flex justify-end">
-              <Button type="button" variant="ghost" size="sm" onClick={() => choose('simple')}>
-                Skip — use Simple
+              <Button type="button" variant="ghost" size="sm" onClick={() => choose('play')}>
+                Skip — use Play
               </Button>
             </div>
           </>

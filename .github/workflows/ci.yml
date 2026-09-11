@@ -36,7 +36,7 @@ jobs:
           CI: true
           PROMPT_AUTH_ENABLED: 'false'
           NEXT_PUBLIC_PLAYWRIGHT: '1'
-      # Play campaign loop is the active product bet — fail fast on regressions.
+      # Play campaign loop is the flagship product bet — fail fast on regressions.
       - run: npm run test:e2e:play
         env:
           CI: true

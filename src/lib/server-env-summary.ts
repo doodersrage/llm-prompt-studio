@@ -344,7 +344,7 @@ export function getServerEnvSummary(): ServerEnvSummary {
           label: 'Login required',
           value: isAuthExplicitlyEnabled() ? 'true' : 'false',
           configured: true,
-          hint: 'Set 1/true/yes to require sign-in for the app.',
+          hint: 'Auth-off is localhost-only. Network-exposed binds (PROMPT_EXPOSED, public PROMPT_API_URL, or 0.0.0.0 bind) fail closed unless login is on with real secrets — see docs/configuration.md.',
         },
         {
           key: 'PROMPT_SESSION_SECRET',
@@ -355,7 +355,7 @@ export function getServerEnvSummary(): ServerEnvSummary {
               ? 'configured'
               : 'not needed (login not required)',
           configured: !isUsingInsecureSessionSecret(),
-          hint: 'Session cookies fall back to a hardcoded secret from the public source code when unset. Fine while login is off; set a real PROMPT_SESSION_SECRET before enabling PROMPT_AUTH_ENABLED beyond localhost.',
+          hint: 'Required when PROMPT_AUTH_ENABLED is on — missing values fail startup (hardcoded fallback is no longer accepted). Set a long random string before exposing beyond localhost.',
         },
         {
           key: 'PROMPT_ADMIN_PASSWORD',
@@ -366,7 +366,14 @@ export function getServerEnvSummary(): ServerEnvSummary {
               ? 'configured'
               : 'not needed (login not required)',
           configured: !isUsingDefaultAdminCredentials(),
-          hint: 'The bootstrap admin account stays on the well-known default password ("admin") baked into this open-source repo until PROMPT_ADMIN_PASSWORD is set. Set it before enabling PROMPT_AUTH_ENABLED beyond localhost.',
+          hint: 'Required when PROMPT_AUTH_ENABLED is on — missing values fail startup so the bootstrap admin cannot stay on the well-known default password ("admin").',
+        },
+        {
+          key: 'PROMPT_EXPOSED',
+          label: 'Network-exposed flag',
+          value: process.env.PROMPT_EXPOSED?.trim() || 'false',
+          configured: true,
+          hint: 'Set by docker compose --profile exposed. With auth off, startup fails unless PROMPT_ALLOW_INSECURE_AUTH=1.',
         },
         {
           key: 'API_RATE_LIMIT_MAX',

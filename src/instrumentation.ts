@@ -62,16 +62,32 @@ export async function register() {
     return;
   }
 
-  const { isUsingInsecureSessionSecret, INSECURE_SESSION_SECRET_WARNING } =
-    await import('./lib/session-secret-check');
-  if (isUsingInsecureSessionSecret()) {
-    console.warn(`[security] ${INSECURE_SESSION_SECRET_WARNING}`);
-  }
-
-  const { isUsingDefaultAdminCredentials, getDefaultAdminCredentialsWarning } =
-    await import('./lib/default-admin-check');
-  if (isUsingDefaultAdminCredentials()) {
-    console.warn(`[security] ${getDefaultAdminCredentialsWarning()}`);
+  const {
+    assertSecureExposureOrThrow,
+    isInsecureAuthExplicitlyAllowed,
+    isNetworkExposedDeployment,
+  } = await import('./lib/bind-exposure-check');
+  const { isAuthExplicitlyEnabled } = await import('./lib/auth/config');
+  if (isInsecureAuthExplicitlyAllowed()) {
+    // Still surface what would have failed so operators notice the escape hatch.
+    const { isUsingInsecureSessionSecret, INSECURE_SESSION_SECRET_WARNING } =
+      await import('./lib/session-secret-check');
+    const { isUsingDefaultAdminCredentials, getDefaultAdminCredentialsWarning } =
+      await import('./lib/default-admin-check');
+    const { AUTH_OFF_EXPOSED_ERROR } = await import('./lib/bind-exposure-check');
+    if (isUsingInsecureSessionSecret()) {
+      console.warn(`[security] PROMPT_ALLOW_INSECURE_AUTH=1 — ${INSECURE_SESSION_SECRET_WARNING}`);
+    }
+    if (isUsingDefaultAdminCredentials()) {
+      console.warn(
+        `[security] PROMPT_ALLOW_INSECURE_AUTH=1 — ${getDefaultAdminCredentialsWarning()}`
+      );
+    }
+    if (!isAuthExplicitlyEnabled() && isNetworkExposedDeployment()) {
+      console.warn(`[security] PROMPT_ALLOW_INSECURE_AUTH=1 — ${AUTH_OFF_EXPOSED_ERROR}`);
+    }
+  } else {
+    assertSecureExposureOrThrow();
   }
 
   startServerScheduledBatchLoop();

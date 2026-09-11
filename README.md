@@ -1,26 +1,14 @@
 # Prompt Studio
 
-**Turn a keyword into a queued ComfyUI render, and go from still to clip to a saved character in one loop.**
+**Flagship loop:** Cast → Moodboard → Fitting → Day → Roleplay → Gallery — still to clip to saved character, then **Cut film**.
 
 [![CI](https://github.com/doodersrage/llm-prompt-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/doodersrage/llm-prompt-studio/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/doodersrage/llm-prompt-studio)](https://github.com/doodersrage/llm-prompt-studio/releases)
 [![License: MIT](https://img.shields.io/github/license/doodersrage/llm-prompt-studio)](./LICENSE)
 
-<p align="center">
-  <img src=".github/assets/hero.gif" alt="Prompt Studio: Generate a prompt, send it to ComfyUI, review the result in Gallery" width="820">
-</p>
+Self-hosted Next.js studio for model-aware prompts and ComfyUI (primary) queueing. **Play** is the first-run workspace. Optional engines: Diffusers stills sidecar, Fal / Replicate / Grok / Gemini / Runway / ChatGPT. Specialty tools (Topics, Audio, Mesh, Logo, legacy Pet/Fantasy/Background pages) stay reachable but are parked under **Extras**.
 
-<!--
-  TODO (not yet captured): replace the image above with a real screenshot or short GIF —
-  see .github/assets/README.md for exactly what to record and where to save it.
-  Until that file exists this <img> will show as broken on GitHub; that's expected
-  and fine to leave uncommitted until you've captured one.
--->
-
-
-A Next.js app that turns topics or keywords into model-specific prompts for image and video workflows (ComfyUI primary for generate / Lightning / specialty graphs; Diffusers optional for stills only — txt2img/img2img, not Play film; Fal and Replicate for cloud stills + clips; Grok and Gemini for stills plus native video; ChatGPT stills only), and reformats existing drafts for any supported architecture.
-
-**Docs:** [doodersrage.github.io/llm-prompt-studio](https://doodersrage.github.io/llm-prompt-studio/) · [source](docs/README.md)
+**Docs:** [doodersrage.github.io/llm-prompt-studio](https://doodersrage.github.io/llm-prompt-studio/) · [source](docs/README.md) · [Play guide](docs/play-guide.md)
 
 **Get it:** [GitHub Releases](https://github.com/doodersrage/llm-prompt-studio/releases) (macOS `.dmg`, Windows `.exe`, Linux `.deb` preferred / `.AppImage` portable) · `docker pull ghcr.io/doodersrage/llm-prompt-studio:latest` · [how to cut a release](docs/releasing.md)
 
@@ -50,7 +38,9 @@ step 1 below when you're ready to point it at one.
 2. Use **Heal & ready** on first launch (Settings → Overview).
 3. Generate a prompt on **Generate**, then **Send to ComfyUI**.
 
-**10-minute loop** (still → clip → Cast): Generate or pick a gallery still → open **Video** (I2V) → queue a clip → rate in **Gallery** → **Save to Cast** from Roleplay or Character home. Full walkthrough: [Operator guide — 10-minute loop](docs/operator.md#10-minute-loop).
+**10-minute film loop** (flagship): Heal & ready → **Play campaign** → Moodboard extract → Fitting Keep → Day stills/clips → **Cut film** → Save to Cast. Walkthrough: [Play guide](docs/play-guide.md) · [Operator guide — 10-minute loop](docs/operator.md#10-minute-loop).
+
+**Still → clip shortcut:** Generate or pick a gallery still → **Video** (I2V) → rate in **Gallery** → **Save to Cast**.
 
 **Day-2 ops** (second GPU, move to a new machine, invite users): [Operator guide](docs/operator.md).
 
@@ -62,9 +52,9 @@ Use **Simple / Studio / Full** from the sidebar footer or **Profile → Appearan
 
 | Mode                 | Sidebar                         | Shared controls                  | Studio tabs                                     |
 | -------------------- | ------------------------------- | -------------------------------- | ----------------------------------------------- |
-| **Simple** (default) | Essentials + More tools         | Advanced collapsed               | History, Compare, Templates, Presets, Analytics |
-| **Play**             | Campaign, Moodboard, Fitting, Day, Roleplay, Gallery, Queue | Lean Roleplay rail               | Same as Simple                                  |
-| **Studio**           | Edit / Media / Library groups   | Collapsed advanced sections      | All tabs                                        |
+| **Play** (default)   | Campaign, Moodboard, Fitting, Day, Roleplay, Gallery, Queue | Lean Roleplay rail               | Same as Simple                                  |
+| **Simple**           | Essentials + More tools         | Advanced collapsed               | History, Compare, Templates, Presets, Analytics |
+| **Studio**           | Edit / Media / Library / Extras | Collapsed advanced sections      | All tabs                                        |
 | **Full**             | Same as Studio, groups expanded | Quality sections open by default | All tabs                                        |
 
 ## Supported models
@@ -96,7 +86,7 @@ Use **Simple / Studio / Full** from the sidebar footer or **Profile → Appearan
 | **Other DiT**         | PixArt, Lumina 2, OmniGen2, Kandinsky 5, Stable Cascade | Architecture-tuned NLP or instructions                 |
 | **Instruct / Edit**   | SD1.5/SDXL InstructPix2Pix, Lotus-D                     | Short imperative edit instructions                     |
 
-Audio and 3D use **Audio** (`/audio`) and **3D Mesh** (`/mesh`). **WAN / Hunyuan Video** use **Video** (`/video`).
+Audio and 3D live under **Extras** (`/audio`, `/mesh`) — parked specialty tools; prefer Video + Play for motion. **WAN / Hunyuan Video** use **Video** (`/video`).
 
 - **Import Comfy packs:** Settings → ComfyUI → workflow library → Import (API-format JSON).
 - **Download weights:** set `COMFYUI_ROOT`, then Settings → ComfyUI → Model assets.

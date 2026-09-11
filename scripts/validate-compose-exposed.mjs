@@ -23,6 +23,10 @@ if (!/PROMPT_AUTH_ENABLED:\s*['"]true['"]/.test(raw)) {
   fail('exposed service must set PROMPT_AUTH_ENABLED: true');
 }
 
+if (!/PROMPT_EXPOSED:\s*['"]true['"]/.test(raw)) {
+  fail('exposed service must set PROMPT_EXPOSED: true (fail-closed auth gate)');
+}
+
 for (const key of [
   'PROMPT_SESSION_SECRET',
   'PROMPT_ADMIN_PASSWORD',

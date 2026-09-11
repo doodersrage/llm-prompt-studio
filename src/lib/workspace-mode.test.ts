@@ -75,9 +75,10 @@ describe("workspace-mode", () => {
     withMockLocalStorage(() => resetBrowserStorageCache());
   });
 
-  it("normalizes unknown modes to simple", () => {
-    assert.equal(normalizeWorkspaceMode("nope"), "simple");
+  it("normalizes unknown modes to play", () => {
+    assert.equal(normalizeWorkspaceMode("nope"), "play");
     assert.equal(normalizeWorkspaceMode("simple"), "simple");
+    assert.equal(normalizeWorkspaceMode("play"), "play");
   });
 
   it("persists workspace mode and marks chosen", () => {
@@ -122,20 +123,22 @@ describe("workspace-mode", () => {
     assert.equal(flatCount, flattenAppNavLinks(APP_NAV_GROUPS).length);
   });
 
-  it("keeps Edit / Media / Library structure for studio and full", () => {
+  it("keeps Edit / Media / Library / Extras structure for studio and full", () => {
     for (const mode of ["studio", "full"] as const) {
       const groups = navGroupsForWorkspaceMode(mode, APP_NAV_GROUPS);
       const labels = groups.map((group) => group.label);
       assert.ok(labels.includes("Edit"));
       assert.ok(labels.includes("Media"));
       assert.ok(labels.includes("Library"));
+      assert.ok(labels.includes("Extras"));
       assert.equal(labels.includes("Tools"), false);
     }
   });
 
-  it("defaults Media collapsed in studio and expands all in full", () => {
+  it("defaults Media and Extras collapsed in studio and expands all in full", () => {
     const studio = defaultExpandedNavGroups("studio", APP_NAV_GROUPS);
     assert.equal(studio.includes("Media"), false);
+    assert.equal(studio.includes("Extras"), false);
     assert.ok(studio.includes("Edit"));
     const full = defaultExpandedNavGroups("full", APP_NAV_GROUPS);
     assert.deepEqual(

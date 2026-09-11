@@ -393,7 +393,7 @@ describe("reset ui chrome", () => {
       resetUiChrome();
       assert.deepEqual(loadNavFavorites(), []);
       assert.equal(loadUiDensity(), "comfortable");
-      assert.equal(loadWorkspaceMode(), "simple");
+      assert.equal(loadWorkspaceMode(), "play");
       assert.equal(loadToolContext("generate"), undefined);
       assert.equal(loadLastToolRoute(), null);
       assert.equal(loadLastToolDraft(), null);

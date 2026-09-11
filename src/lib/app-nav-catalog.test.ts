@@ -23,10 +23,10 @@ function assertValidLink(link: AppNavLink) {
 
 describe('app-nav-catalog', () => {
   describe('APP_NAV_GROUPS', () => {
-    it('declares the six top-level groups in a stable order', () => {
+    it('declares the seven top-level groups in a stable order', () => {
       assert.deepEqual(
         APP_NAV_GROUPS.map(group => group.label),
-        ['Overview', 'Prompt', 'Scene', 'Edit', 'Media', 'Library']
+        ['Overview', 'Prompt', 'Scene', 'Edit', 'Media', 'Library', 'Extras']
       );
     });
 

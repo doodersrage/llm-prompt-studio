@@ -9,6 +9,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Product focus: Play film loop is the first-run workspace default; README / docs lead with Cast → Moodboard → Fitting → Day → Roleplay → Gallery.
+- Security: fail closed when auth is on without `PROMPT_SESSION_SECRET` / `PROMPT_ADMIN_PASSWORD`, or when auth is off on a network-exposed bind (`PROMPT_EXPOSED`, `0.0.0.0`/`::`, or non-loopback `PROMPT_API_URL`). Escape hatch: `PROMPT_ALLOW_INSECURE_AUTH=1`. Compose `--profile exposed` sets `PROMPT_EXPOSED=true`.
+- Scope: park Topics / Audio / Mesh / Logo under sidebar **Extras** (collapsed in Studio); legacy Pet/Fantasy/Background stay command-palette aliases.
+- Diffusers: declare optional stills sidecar only — further parity beyond documented stills is parked; Play film stays Comfy/cloud.
+- Hygiene: rename npm package to `llm-prompt-studio`, remove dual `pnpm-lock.yaml`, drop broken README hero `<img>`, delete `_to_delete/` junk.
 - Docs: architecture Diffusers backend notes `ImageScale` / `ResizeImage` / `ImageScaleToTotalPixels` on ref paths, passthrough UI nodes, and Comfy-fallback queue tagging (`formatDiffusersQueueRouting`); Dynamic VRAM / AIMDO stays a parked non-goal.
 - Diffusers engine: allow `ImageScaleToTotalPixels` on ref paths (Studio Qwen/Flux enrich megapixel scale before VAEEncode/ReferenceLatent).
 - Diffusers → Comfy queue honesty: tag `comfy-fallback` + reason when Diffusers classify/queue declines, and toast/status use the backend that actually accepted the job (not the preferred Diffusers engine id).

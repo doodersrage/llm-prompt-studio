@@ -83,7 +83,7 @@ export default function SharedModelSurface({
           cloudEngine
             ? `${engineDisplayName(shared.inferenceEngine)} ignores Comfy workflows, LoRAs, and live latents. Image 1 is sent as img2img when present.`
             : shared.inferenceEngine === 'diffusers'
-              ? 'Optional Diffusers inventory (experimental). Prefer ComfyUI for Lightning quality/speed on 24GB.'
+              ? 'Optional Diffusers stills inventory. Prefer ComfyUI for Lightning quality/speed on 24GB and for Play film.'
               : systemPathActive
                 ? undefined
                 : shared.autoSelectWorkflowForModel !== false

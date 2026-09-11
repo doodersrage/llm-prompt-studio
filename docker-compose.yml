@@ -17,7 +17,7 @@ services:
       - ollama
     restart: unless-stopped
 
-  # Publish beyond LAN only with auth. Requires PROMPT_SESSION_SECRET + PROMPT_ADMIN_PASSWORD.
+  # Publish beyond LAN only with auth. Requires PROMPT_EXPOSED + PROMPT_SESSION_SECRET + PROMPT_ADMIN_PASSWORD.
   # Usage: docker compose --profile exposed up
   prompt-tools-exposed:
     profiles: ['exposed']
@@ -32,6 +32,7 @@ services:
       COMFYUI_API_URL: ${COMFYUI_API_URL:-http://comfyui:8188}
       PROMPT_API_URL: ${PROMPT_API_URL:?set PROMPT_API_URL to the public origin}
       PROMPT_AUTH_ENABLED: 'true'
+      PROMPT_EXPOSED: 'true'
       PROMPT_SESSION_SECRET: ${PROMPT_SESSION_SECRET:?set PROMPT_SESSION_SECRET}
       PROMPT_ADMIN_USERNAME: ${PROMPT_ADMIN_USERNAME:-admin}
       PROMPT_ADMIN_PASSWORD: ${PROMPT_ADMIN_PASSWORD:?set PROMPT_ADMIN_PASSWORD}
