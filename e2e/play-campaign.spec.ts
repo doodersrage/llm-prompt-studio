@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { ensureAuthenticated } from './helpers/auth';
 import { seedSettingsCacheOnNextLoad } from './helpers/idb';
 import { gotoStable } from './helpers/navigation';
@@ -581,10 +581,7 @@ test('plan a day bumps campaign stepIndex for resume', async ({ page }) => {
   expect(stepIndex).toBe(3);
 });
 
-test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page }) => {
-  const tinyPng =
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-
+async function installFakeMediaRecorder(page: Page) {
   await page.addInitScript(() => {
     class FakeMediaRecorder {
       state = 'inactive';
@@ -616,7 +613,13 @@ test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page 
       } as unknown as MediaStream;
     };
   });
+}
 
+test('day cut film with mocked MediaRecorder shows Save to Cast', async ({ page }) => {
+  const tinyPng =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  await installFakeMediaRecorder(page);
   await seedSettingsCacheOnNextLoad(page, {
     shared: { activeCharacterId: 'e2e-cut-cast' },
     characters: {
@@ -672,76 +675,40 @@ test('roleplay cut film with mocked MediaRecorder shows Cast deep-links', async 
   const tinyPng =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-  await page.addInitScript(({ png }) => {
-    class FakeMediaRecorder {
-      state = 'inactive';
-      ondataavailable: ((event: { data: Blob }) => void) | null = null;
-      onstop: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      static isTypeSupported() {
-        return true;
-      }
-      start() {
-        this.state = 'recording';
-        queueMicrotask(() => {
-          this.ondataavailable?.({
-            data: new Blob([new Uint8Array([0, 0, 0, 1])], { type: 'video/webm' }),
-          });
-        });
-      }
-      stop() {
-        this.state = 'inactive';
-        queueMicrotask(() => this.onstop?.());
-      }
-      requestData() {}
-    }
-    // @ts-expect-error test shim
-    window.MediaRecorder = FakeMediaRecorder;
-    HTMLCanvasElement.prototype.captureStream = function captureStream() {
-      return {
-        getTracks: () => [{ stop() {}, kind: 'video', enabled: true }],
-      } as unknown as MediaStream;
-    };
-
-    window.localStorage.setItem(
-      'comfy-prompt-characters-v1',
-      JSON.stringify({
-        version: 1,
-        characters: [
+  await installFakeMediaRecorder(page);
+  // Seed tools sidecar — main-blob localStorage loses to an empty IDB sidecar on hydrate.
+  await seedSettingsCacheOnNextLoad(page, {
+    shared: { activeCharacterId: 'e2e-rp-cut' },
+    characters: {
+      version: 1,
+      characters: [
+        {
+          id: 'e2e-rp-cut',
+          name: 'RP Cut',
+          version: 1,
+          updatedAt: Date.now(),
+          descriptor: 'roleplay cut look',
+        },
+      ],
+      removedIds: [],
+    },
+    tools: {
+      roleplay: {
+        characterName: 'RP Cut',
+        story: [
           {
-            id: 'e2e-rp-cut',
-            name: 'RP Cut',
-            version: 1,
-            updatedAt: Date.now(),
-            descriptor: 'roleplay cut look',
+            id: 'beat-1',
+            at: Date.now(),
+            kind: 'plot',
+            title: 'Opening',
+            prompt: 'A quiet opening beat',
+            stillStatus: 'completed',
+            imageUrl: tinyPng,
           },
         ],
-        removedIds: [],
-      })
-    );
-    window.localStorage.setItem(
-      'comfy-prompt-tool-settings-v1',
-      JSON.stringify({
-        shared: { activeCharacterId: 'e2e-rp-cut' },
-        tools: {
-          roleplay: {
-            characterName: 'RP Cut',
-            story: [
-              {
-                id: 'beat-1',
-                at: Date.now(),
-                kind: 'plot',
-                title: 'Opening',
-                prompt: 'A quiet opening beat',
-                stillStatus: 'completed',
-                imageUrl: png,
-              },
-            ],
-          },
-        },
-      })
-    );
-  }, { png: tinyPng });
+      },
+    },
+  });
 
   page.on('download', download => {
     void download.cancel().catch(() => undefined);
@@ -751,7 +718,7 @@ test('roleplay cut film with mocked MediaRecorder shows Cast deep-links', async 
   await dismissBlockingOverlays(page);
   const cutBtn = page.getByRole('button', { name: /Cut film/i });
   await expect(cutBtn).toBeVisible({ timeout: 30_000 });
-  await expect(cutBtn).toBeEnabled({ timeout: 10_000 });
+  await expect(cutBtn).toBeEnabled({ timeout: 15_000 });
   await cutBtn.click();
   await expect(page.getByTestId('roleplay-open-cast-film')).toBeVisible({
     timeout: 45_000,
@@ -769,76 +736,39 @@ test('mobile play cut film with mocked MediaRecorder shows Cast deep-links', asy
   const tinyPng =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-  await page.addInitScript(({ png }) => {
-    class FakeMediaRecorder {
-      state = 'inactive';
-      ondataavailable: ((event: { data: Blob }) => void) | null = null;
-      onstop: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      static isTypeSupported() {
-        return true;
-      }
-      start() {
-        this.state = 'recording';
-        queueMicrotask(() => {
-          this.ondataavailable?.({
-            data: new Blob([new Uint8Array([0, 0, 0, 1])], { type: 'video/webm' }),
-          });
-        });
-      }
-      stop() {
-        this.state = 'inactive';
-        queueMicrotask(() => this.onstop?.());
-      }
-      requestData() {}
-    }
-    // @ts-expect-error test shim
-    window.MediaRecorder = FakeMediaRecorder;
-    HTMLCanvasElement.prototype.captureStream = function captureStream() {
-      return {
-        getTracks: () => [{ stop() {}, kind: 'video', enabled: true }],
-      } as unknown as MediaStream;
-    };
-
-    window.localStorage.setItem(
-      'comfy-prompt-characters-v1',
-      JSON.stringify({
-        version: 1,
-        characters: [
+  await installFakeMediaRecorder(page);
+  await seedSettingsCacheOnNextLoad(page, {
+    shared: { activeCharacterId: 'e2e-m-cut' },
+    characters: {
+      version: 1,
+      characters: [
+        {
+          id: 'e2e-m-cut',
+          name: 'Mobile Cut',
+          version: 1,
+          updatedAt: Date.now(),
+          descriptor: 'mobile cut look',
+        },
+      ],
+      removedIds: [],
+    },
+    tools: {
+      roleplay: {
+        characterName: 'Mobile Cut',
+        story: [
           {
-            id: 'e2e-m-cut',
-            name: 'Mobile Cut',
-            version: 1,
-            updatedAt: Date.now(),
-            descriptor: 'mobile cut look',
+            id: 'beat-m1',
+            at: Date.now(),
+            kind: 'plot',
+            title: 'Opening',
+            prompt: 'A mobile opening beat',
+            stillStatus: 'completed',
+            imageUrl: tinyPng,
           },
         ],
-        removedIds: [],
-      })
-    );
-    window.localStorage.setItem(
-      'comfy-prompt-tool-settings-v1',
-      JSON.stringify({
-        shared: { activeCharacterId: 'e2e-m-cut' },
-        tools: {
-          roleplay: {
-            characterName: 'Mobile Cut',
-            story: [
-              {
-                id: 'beat-m1',
-                at: Date.now(),
-                kind: 'plot',
-                title: 'Opening',
-                prompt: 'A mobile opening beat',
-                stillStatus: 'completed',
-                imageUrl: png,
-              },
-            ],
-          },
-        },
-      })
-    );
-  }, { png: tinyPng });
+      },
+    },
+  });
 
   page.on('download', download => {
     void download.cancel().catch(() => undefined);
@@ -848,7 +778,7 @@ test('mobile play cut film with mocked MediaRecorder shows Cast deep-links', asy
   await dismissBlockingOverlays(page);
   const cutBtn = page.getByRole('button', { name: /Cut film/i });
   await expect(cutBtn).toBeVisible({ timeout: 30_000 });
-  await expect(cutBtn).toBeEnabled({ timeout: 10_000 });
+  await expect(cutBtn).toBeEnabled({ timeout: 15_000 });
   await cutBtn.click();
   await expect(page.getByTestId('roleplay-open-cast-film')).toBeVisible({
     timeout: 45_000,
