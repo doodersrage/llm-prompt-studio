@@ -35,7 +35,9 @@ test.describe('Workflow editor', () => {
         inputs: { ckpt_name: 'model.safetensors' },
       },
     });
-    await page.getByPlaceholder(/Paste Comfy API-format workflow JSON/i).fill(sampleWorkflow);
+    const jsonField = page.getByTestId('workflow-editor-json');
+    await jsonField.fill(sampleWorkflow);
+    await expect(jsonField).toHaveValue(sampleWorkflow);
     await page.getByRole('button', { name: /Parse JSON/i }).click();
     await expect(page.getByTestId('workflow-editor-status')).toContainText(/Loaded|nodes/i, {
       timeout: 15_000,
@@ -78,7 +80,9 @@ test.describe('Workflow editor', () => {
         inputs: { ckpt_name: 'model.safetensors' },
       },
     });
-    await page.getByPlaceholder(/Paste Comfy API-format workflow JSON/i).fill(sampleWorkflow);
+    const jsonField = page.getByTestId('workflow-editor-json');
+    await jsonField.fill(sampleWorkflow);
+    await expect(jsonField).toHaveValue(sampleWorkflow);
     await page.getByRole('button', { name: /Parse JSON/i }).click();
     await expect(page.getByTestId('workflow-editor-status')).toContainText(/Loaded|nodes/i, {
       timeout: 15_000,

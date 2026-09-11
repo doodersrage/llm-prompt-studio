@@ -22,7 +22,12 @@ export default function LoginPage() {
         <section className="page-enter page-enter-delayed w-full max-w-md lg:flex-none">
           <Suspense
             fallback={
-              <div className="ui-card space-y-4 p-8" aria-busy="true" aria-label="Loading sign in">
+              <div
+                className="ui-card space-y-4 p-8"
+                role="status"
+                aria-busy="true"
+                aria-label="Loading sign in"
+              >
                 <div className="h-8 w-40 rounded-[var(--radius-md)] bg-[var(--bg-active)]" />
                 <div className="h-10 w-full rounded-[var(--radius-md)] bg-[var(--bg-subtle)]" />
                 <div className="h-10 w-full rounded-[var(--radius-md)] bg-[var(--bg-subtle)]" />

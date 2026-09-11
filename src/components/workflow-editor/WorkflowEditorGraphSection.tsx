@@ -133,6 +133,7 @@ export default function WorkflowEditorGraphSection({
           onChange={event => setRawJson(event.target.value)}
           className="font-mono text-xs"
           placeholder="Paste Comfy API-format workflow JSON…"
+          data-testid="workflow-editor-json"
         />
         {status ? (
           <p className="text-xs text-[var(--text-muted)]" data-testid="workflow-editor-status">

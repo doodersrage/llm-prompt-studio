@@ -250,7 +250,7 @@ export function CompareCardsSkeleton() {
 
 export function StudioTabSkeleton() {
   return (
-    <div className="ui-section-stack" aria-busy="true" aria-label="Loading studio">
+    <div className="ui-section-stack" role="status" aria-busy="true" aria-label="Loading studio">
       <div className="ui-meta-panel space-y-4">
         <Skeleton className="ui-skeleton-title w-32" />
         <div className="flex flex-wrap gap-2">
@@ -280,7 +280,7 @@ export function StudioTabSkeleton() {
 
 export function ToolPageSkeleton({ label = 'Loading' }: { label?: string }) {
   return (
-    <div className="ui-section-stack" aria-busy="true" aria-label={label}>
+    <div className="ui-section-stack" role="status" aria-busy="true" aria-label={label}>
       <div className="ui-card space-y-6 p-[var(--card-padding)]">
         <Skeleton className="ui-skeleton-title w-56" />
         <div className="ui-meta-panel space-y-4">

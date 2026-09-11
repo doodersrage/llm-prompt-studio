@@ -9,6 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Fix workflow editor Parse JSON race (read live textarea so fast paste+click is not empty) and give loading shells `role="status"` for axe `aria-prohibited-attr`.
 ## [v1.6.1] - 2026-09-11
 
 - Product focus: Play film loop is the first-run workspace default; README / docs lead with Cast → Moodboard → Fitting → Day → Roleplay → Gallery.

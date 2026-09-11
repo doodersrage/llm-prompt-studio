@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useNodesState,
   useEdgesState,
@@ -50,7 +50,12 @@ export function useWorkflowEditorToolOrchestration() {
     typeof window === 'undefined' ? [] : loadComfyWorkflowFiles()
   );
   const [selectedId, setSelectedId] = useState<string>('');
-  const [rawJson, setRawJson] = useState('');
+  const [rawJson, setRawJsonState] = useState('');
+  const rawJsonRef = useRef('');
+  const setRawJson = useCallback((value: string) => {
+    rawJsonRef.current = value;
+    setRawJsonState(value);
+  }, []);
   const [status, setStatus] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -70,11 +75,12 @@ export function useWorkflowEditorToolOrchestration() {
       const { nodes: nextNodes, edges: nextEdges } = comfyApiWorkflowToReactFlow(workflow);
       setNodes(nextNodes as Node[]);
       setEdges(nextEdges as Edge[]);
-      setRawJson(JSON.stringify(workflow, null, 2));
+      const pretty = JSON.stringify(workflow, null, 2);
+      setRawJson(pretty);
       setStatus(`Loaded ${label} · ${nextNodes.length} nodes`);
       setSelectedNodeId(null);
     },
-    [setEdges, setNodes]
+    [setEdges, setNodes, setRawJson]
   );
 
   const onLoadLibrary = useCallback(() => {
@@ -97,7 +103,22 @@ export function useWorkflowEditorToolOrchestration() {
 
   const onLoadJson = useCallback(() => {
     try {
-      const parsed = parseWorkflowJson(rawJson);
+      // Prefer the live textarea value over React state — Playwright (and fast paste+click)
+      // can fire Parse before the controlled onChange commit lands, which used to surface
+      // "JSON parsed to empty." despite the textarea already holding a valid graph.
+      const live =
+        typeof document !== 'undefined'
+          ? (
+              document.querySelector(
+                '[data-testid="workflow-editor-json"]'
+              ) as HTMLTextAreaElement | null
+            )?.value
+          : undefined;
+      const source = live ?? rawJsonRef.current;
+      if (live != null && live !== rawJsonRef.current) {
+        setRawJson(live);
+      }
+      const parsed = parseWorkflowJson(source);
       if (!parsed) {
         setStatus('JSON parsed to empty.');
         return;
@@ -106,7 +127,7 @@ export function useWorkflowEditorToolOrchestration() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Parse failed.');
     }
-  }, [loadWorkflowObject, rawJson]);
+  }, [loadWorkflowObject, setRawJson]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -151,7 +172,7 @@ export function useWorkflowEditorToolOrchestration() {
     setSelectedId(id);
     setStatus(`Saved “${name}” to workflow library.`);
     return nextFile;
-  }, [buildWorkflowFromGraph, selectedId]);
+  }, [buildWorkflowFromGraph, selectedId, setRawJson]);
 
   const onOptimize = useCallback(() => {
     if (nodes.length === 0) {

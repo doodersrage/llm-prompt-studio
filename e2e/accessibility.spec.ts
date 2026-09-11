@@ -45,6 +45,10 @@ for (const route of ROUTES) {
     }
     await gotoStable(page, route.path);
     await dismissBlockingOverlays(page);
+    // Wait out lazy tool shells so axe does not sample mid-load placeholders.
+    await expect(page.getByRole('status', { name: /Loading/i })).toHaveCount(0, {
+      timeout: 15_000,
+    }).catch(() => undefined);
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
