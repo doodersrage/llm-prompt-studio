@@ -9,6 +9,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [v1.6.1] - 2026-09-11
+
 - Product focus: Play film loop is the first-run workspace default; README / docs lead with Cast → Moodboard → Fitting → Day → Roleplay → Gallery.
 - Security: fail closed when auth is on without `PROMPT_SESSION_SECRET` / `PROMPT_ADMIN_PASSWORD`, or when auth is off on a network-exposed bind (`PROMPT_EXPOSED`, `0.0.0.0`/`::`, or non-loopback `PROMPT_API_URL`). Escape hatch: `PROMPT_ALLOW_INSECURE_AUTH=1`. Compose `--profile exposed` sets `PROMPT_EXPOSED=true`.
 - Scope: park Topics / Audio / Mesh / Logo under sidebar **Extras** (collapsed in Studio); legacy Pet/Fantasy/Background stay command-palette aliases.
