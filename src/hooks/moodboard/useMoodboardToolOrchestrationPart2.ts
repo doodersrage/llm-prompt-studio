@@ -8,6 +8,7 @@ import { collectIsolateSourceUrls, loadImageBlobFromUrls } from '@/lib/isolate-s
 import { sharedLlmRequestBody } from '@/lib/llm-request-options';
 import {
   buildLookPackFromMoodboard,
+  canReuseStagedLookPack,
   loadLookPack,
   lookPackDayHref,
   lookPackFittingHref,
@@ -226,13 +227,7 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
   const ensureLookPackForHandoff = useCallback(async () => {
     const characterId = (character?.id ?? shared.activeCharacterId)?.trim() || undefined;
     const staged = loadLookPack();
-    const reusable =
-      staged &&
-      Boolean(
-        staged.vibePrompt?.trim() || staged.instruction?.trim() || staged.moodNotes?.trim()
-      ) &&
-      (!characterId || !staged.characterId || staged.characterId === characterId);
-    if (reusable && staged) {
+    if (canReuseStagedLookPack(staged, characterId) && staged) {
       const next = {
         ...staged,
         characterId: characterId || staged.characterId,

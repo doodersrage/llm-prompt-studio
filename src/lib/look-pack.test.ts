@@ -19,11 +19,34 @@ import {
   lookPackRoleplayHref,
   normalizeLookPack,
   normalizePortableLookPack,
+  canReuseStagedLookPack,
   readPortableLookPackFromHash,
 } from './look-pack';
 import { DEFAULT_DAY_SLOTS } from './day-planner';
 
 describe('look-pack', () => {
+  it('canReuseStagedLookPack requires matching Cast ids', () => {
+    const pack = normalizeLookPack({
+      version: 1,
+      source: 'moodboard',
+      characterId: 'char-a',
+      vibePrompt: 'neon rain',
+      savedAt: 1,
+    });
+    assert.ok(pack);
+    assert.equal(canReuseStagedLookPack(pack, 'char-a'), true);
+    assert.equal(canReuseStagedLookPack(pack, 'char-b'), false);
+    const orphan = normalizeLookPack({
+      version: 1,
+      source: 'moodboard',
+      vibePrompt: 'neon rain',
+      savedAt: 1,
+    });
+    assert.ok(orphan);
+    assert.equal(canReuseStagedLookPack(orphan, 'char-b'), false);
+    assert.equal(canReuseStagedLookPack(orphan, undefined), true);
+    assert.equal(canReuseStagedLookPack(null, 'char-a'), false);
+  });
   it('buildLookPackFromMoodboard collects role notes', () => {
     const pack = buildLookPackFromMoodboard({
       characterId: 'char-1',

@@ -6,13 +6,16 @@ import { useCachedSettings } from '@/hooks/useCachedSettings';
 import {
   addCharacterLookPack,
   applyCharacterRecord,
+  applyCharacterRecordFresh,
   characterFromShared,
+  createBlankCharacter,
   getCharacter,
   getCharacterLookPack,
   lookPacksOf,
   upsertCharacter,
 } from '@/lib/character-os';
 import {
+  clearLookPack,
   clearLookPackShareHash,
   loadLookPack,
   buildPortableLookPackShareLink,
@@ -35,6 +38,8 @@ import { CHARACTERS_UPDATED_EVENT } from '@/lib/character-os';
 import {
   loadSettingsCache,
   saveSharedSettings,
+  saveToolSettings,
+  DEFAULT_MOODBOARD_TOOL_CACHE,
   DEFAULT_ROLEPLAY_TOOL_CACHE,
 } from '@/lib/settings-cache';
 import { scheduleAfterCommit } from '@/lib/schedule-after-commit';
@@ -295,10 +300,18 @@ export function usePlayCampaignWizardOrchestration({
   const createCharacter = useCallback(
     (input: { name: string; continueToMoodboard?: boolean }) => {
       const name = input.name.trim() || 'Untitled character';
-      const record = characterFromShared(loadSettingsCache().shared, { name });
+      const record = createBlankCharacter(name);
       upsertCharacter(record);
       const saved = getCharacter(record.id) ?? record;
-      persistCharacter(saved.id);
+      // Drop the previous Cast's face lock / wardrobe / look pack / Moodboard tiles.
+      clearLookPack();
+      saveToolSettings('moodboard', { ...DEFAULT_MOODBOARD_TOOL_CACHE });
+      const patch = applyCharacterRecordFresh(saved);
+      saveSharedSettings({
+        ...loadSettingsCache().shared,
+        ...patch,
+      });
+      updateShared(patch);
       const moodboardIndex = PLAY_CAMPAIGN_STEPS.findIndex(entry => entry.id === 'moodboard');
       const continueToMoodboard = input.continueToMoodboard === true;
       savePlayCampaignState({
@@ -324,7 +337,7 @@ export function usePlayCampaignWizardOrchestration({
       setStatus(`Created "${saved.name}". Continue to Moodboard when ready.`);
       router.replace(`/play?character=${encodeURIComponent(saved.id)}`);
     },
-    [persistCharacter, router]
+    [router, updateShared]
   );
 
   const applySavedLookPack = useCallback(

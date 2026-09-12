@@ -156,6 +156,31 @@ export function clearLookPack(): void {
   window.sessionStorage.removeItem(LOOK_PACK_KEY);
 }
 
+/**
+ * Reuse a staged Moodboard pack only when it belongs to the active Cast
+ * (or both sides are anonymous). Never stamp another character's look onto a new one.
+ */
+export function canReuseStagedLookPack(
+  staged: LookPack | null | undefined,
+  characterId?: string | null
+): boolean {
+  if (!staged) {
+    return false;
+  }
+  const hasContent = Boolean(
+    staged.vibePrompt?.trim() || staged.instruction?.trim() || staged.moodNotes?.trim()
+  );
+  if (!hasContent) {
+    return false;
+  }
+  const stagedId = staged.characterId?.trim() || '';
+  const activeId = characterId?.trim() || '';
+  if (!activeId && !stagedId) {
+    return true;
+  }
+  return Boolean(activeId && stagedId && activeId === stagedId);
+}
+
 /** Combined notes string for Fitting / Day tool notes fields. */
 export function lookPackNotes(pack: LookPack): string {
   return [

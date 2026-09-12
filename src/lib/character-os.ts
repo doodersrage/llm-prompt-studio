@@ -460,6 +460,18 @@ export function characterFromShared(
   };
 }
 
+/** Fresh Cast record — name only; does not inherit the live session look. */
+export function createBlankCharacter(name: string): CharacterRecord {
+  const trimmed = name.trim() || 'Untitled character';
+  return {
+    id: newCharacterId(),
+    name: trimmed,
+    version: 1,
+    updatedAt: Date.now(),
+    characterName: trimmed,
+  };
+}
+
 function omitUndefinedSettings(
   patch: Partial<SharedToolSettings> & Record<string, unknown>
 ): Partial<SharedToolSettings> {
@@ -489,6 +501,31 @@ export function applyCharacterRecord(character: CharacterRecord): Partial<Shared
       ? { sessionActiveLoraIds: [...normalized.loraLibraryIds] }
       : {}),
   });
+}
+
+/**
+ * Activate a character and drop prior Cast identity that the record does not define
+ * (face lock, wardrobe, look, session LoRAs). Use when creating a blank Cast so the
+ * previous character's look does not stick to the session.
+ */
+export function applyCharacterRecordFresh(character: CharacterRecord): Partial<SharedToolSettings> {
+  return {
+    activeLookId: undefined,
+    activeCharacterDescriptor: undefined,
+    ipAdapterImageFilename: undefined,
+    ipAdapterImageFilenames: undefined,
+    ipAdapterImageUrl: undefined,
+    ipAdapterComfyUrl: undefined,
+    ipAdapterStrength: undefined,
+    ipAdapterModelFilename: undefined,
+    identityKind: undefined,
+    lockedWardrobeId: undefined,
+    lockedLocation: undefined,
+    lockedVariationSeed: undefined,
+    alwaysIncludeClothing: undefined,
+    sessionActiveLoraIds: undefined,
+    ...applyCharacterRecord(character),
+  };
 }
 
 export function characterFromRoleplaySession(

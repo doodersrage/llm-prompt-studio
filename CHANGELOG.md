@@ -10,6 +10,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - Play empty Cast: inline **Create character** (Create & continue to Moodboard); Cast roster empty CTA points at Play instead of Roleplay-first.
+- Fix Play create character inheriting the previous Cast look (blank record, clear face lock / wardrobe / session look pack / Moodboard tiles; tighten staged look-pack reuse to matching character ids).
 
 ## [v1.6.2] - 2026-09-12
 

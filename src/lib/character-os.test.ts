@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   applyCharacterRecord,
+  applyCharacterRecordFresh,
   applyRemovedCharacterIds,
   bundleFromCharacter,
   characterFromBundle,
   characterFromRoleplaySession,
   characterFromShared,
+  createBlankCharacter,
   activeLook,
   lookFromAppearance,
   looksOf,
@@ -96,6 +98,22 @@ describe('character-os', () => {
     assert.equal(record.name, 'Nova');
     assert.equal(record.ipAdapter?.imageUrl, '/api/gallery/media/identity');
     assert.equal(record.lockedLocation, 'neon alley');
+  });
+
+  it('createBlankCharacter does not inherit session face lock or wardrobe', () => {
+    const blank = createBlankCharacter('Kai');
+    assert.equal(blank.name, 'Kai');
+    assert.equal(blank.ipAdapter?.imageFilename, undefined);
+    assert.equal(blank.descriptor, undefined);
+    assert.equal(blank.lockedWardrobeId, undefined);
+    const fresh = applyCharacterRecordFresh(blank);
+    assert.equal(fresh.activeCharacterId, blank.id);
+    assert.equal(fresh.ipAdapterImageFilename, undefined);
+    assert.equal(fresh.lockedWardrobeId, undefined);
+    assert.equal(fresh.activeCharacterDescriptor, undefined);
+    // Explicit clears so callers can overwrite a prior Cast session.
+    assert.ok('ipAdapterImageFilename' in fresh);
+    assert.ok('lockedWardrobeId' in fresh);
   });
 
   it('migrates bundles and roleplay sessions without duplicating names', () => {
