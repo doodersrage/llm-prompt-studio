@@ -25,7 +25,7 @@ Switch modes from the sidebar footer or **Profile → Appearance**. Play slimmed
 
 ### 1. Open Play (`/play`)
 
-Pick or create a **Cast character**. The campaign stepper shows where you are: Cast → Moodboard → Fitting → Day → Roleplay.
+**Create or pick** a Cast character on Play (name → **Create & continue to Moodboard**). You do not need Roleplay first. The campaign stepper shows: Cast → Moodboard → Fitting → Day → Roleplay (optional).
 
 ### 2. Moodboard (`/moodboard`)
 

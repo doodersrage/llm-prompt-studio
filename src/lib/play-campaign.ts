@@ -25,7 +25,7 @@ export const PLAY_CAMPAIGN_STEPS: PlayCampaignStep[] = [
   {
     id: 'character',
     label: 'Cast',
-    description: 'Pick the character this campaign belongs to.',
+    description: 'Create or pick the Cast character this campaign belongs to.',
     href: ({ characterId }) => `/characters/${encodeURIComponent(characterId)}`,
   },
   {

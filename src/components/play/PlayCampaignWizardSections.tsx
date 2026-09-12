@@ -19,7 +19,7 @@ export default function PlayCampaignWizardSections(props: PlayCampaignWizardView
         accent={ACCENT}
         badge={<ToolBadge accent={ACCENT}>Play campaign</ToolBadge>}
         title="Play campaign"
-        description="One guided loop: Moodboard vibe → Fitting try-ons → Day reel → Roleplay story."
+        description="Create a Cast character, then one guided loop: Moodboard → Fitting → Day → optional Roleplay."
       >
         <PlayCampaignCharacterSection
           shared={props.shared}
@@ -27,6 +27,7 @@ export default function PlayCampaignWizardSections(props: PlayCampaignWizardView
           character={props.character}
           activeLookPack={props.activeLookPack}
           persistCharacter={props.persistCharacter}
+          createCharacter={props.createCharacter}
           setStatus={props.setStatus}
         />
         <PlayCampaignShareLookPackSection

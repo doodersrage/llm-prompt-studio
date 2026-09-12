@@ -292,6 +292,41 @@ export function usePlayCampaignWizardOrchestration({
     goToStep('moodboard', activeLookPack);
   }, [activeLookPack, characterId, goToStep]);
 
+  const createCharacter = useCallback(
+    (input: { name: string; continueToMoodboard?: boolean }) => {
+      const name = input.name.trim() || 'Untitled character';
+      const record = characterFromShared(loadSettingsCache().shared, { name });
+      upsertCharacter(record);
+      const saved = getCharacter(record.id) ?? record;
+      persistCharacter(saved.id);
+      const moodboardIndex = PLAY_CAMPAIGN_STEPS.findIndex(entry => entry.id === 'moodboard');
+      const continueToMoodboard = input.continueToMoodboard === true;
+      savePlayCampaignState({
+        version: 1,
+        characterId: saved.id,
+        stepIndex: continueToMoodboard && moodboardIndex >= 0 ? moodboardIndex : 0,
+        updatedAt: Date.now(),
+      });
+      if (continueToMoodboard) {
+        markOnboardingFirstPlayCampaign();
+        void import('@/lib/local-observability').then(
+          ({ noteCampaignStepMetric, noteCampaignMaxStepMetric }) => {
+            noteCampaignStepMetric();
+            noteCampaignMaxStepMetric(moodboardIndex >= 0 ? moodboardIndex : 0);
+          }
+        );
+        setStepOverride('moodboard');
+        setStatus(`Created "${saved.name}" — opening Moodboard.`);
+        router.push(`/moodboard?character=${encodeURIComponent(saved.id)}`);
+        return;
+      }
+      setStepOverride('character');
+      setStatus(`Created "${saved.name}". Continue to Moodboard when ready.`);
+      router.replace(`/play?character=${encodeURIComponent(saved.id)}`);
+    },
+    [persistCharacter, router]
+  );
+
   const applySavedLookPack = useCallback(
     (lookPackId: string) => {
       if (!character) {
@@ -335,6 +370,7 @@ export function usePlayCampaignWizardOrchestration({
     activeLookPack,
     portableShareLink,
     persistCharacter,
+    createCharacter,
     goToStep,
     startNewCampaign,
     applySavedLookPack,

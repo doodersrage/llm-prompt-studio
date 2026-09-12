@@ -35,7 +35,7 @@ The shortest path from a blank install to a character reel:
 1. **Still** — Generate (`/?source=random`) or queue from Heal’s first-scene link. Wait for Gallery.
 2. **Clip** — Open the still → **Continue in Video** (or `/video` with the still as first frame). Set I2V, add a short motion line, queue.
 3. **Rate** — In Gallery, favorite or rate the still/clip so avoidance and recommender learn.
-4. **Cast** — Open Roleplay or Character home → **Save to Cast** (or assign the look to a character). Continue the reel with Fitting / Day / Roleplay as needed.
+4. **Cast** — Create a character on **Play** (or save a look from Generate / Character home / Roleplay). Continue the reel with Fitting / Day / Roleplay as needed.
 
 Stay in **Simple** for Essentials (Dashboard, Generate, Cast, Roleplay, Gallery, Queue). Studio history, Video, Refine, and specialty Scene tools sit under **More tools** / ⌘K.
 

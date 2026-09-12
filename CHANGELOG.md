@@ -9,6 +9,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Play empty Cast: inline **Create character** (Create & continue to Moodboard); Cast roster empty CTA points at Play instead of Roleplay-first.
+
 ## [v1.6.2] - 2026-09-12
 
 - Play loop speed: Day Queue-all + Animate-all submit in parallel; Play/Simple Day stills use draft quality and skip lint; Moodboard handoffs reuse staged look pack (no second vision pass); Fitting kit previews queue concurrently; stall/resume CTAs carry `from=look` + wardrobe; Day cut marks campaign complete on Day (Roleplay optional) with Watch/Save on Cast primary.

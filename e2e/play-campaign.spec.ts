@@ -856,12 +856,14 @@ test('cast media=films deep-link opens Films tab and Film studio', async ({ page
   await expect(page.getByTestId('character-film-studio-empty')).toBeVisible();
 });
 
-test('play campaign empty cast offers Open Cast CTA', async ({ page }) => {
+test('play campaign empty cast offers create character CTA', async ({ page }) => {
   await page.addInitScript(() => {
     try {
       localStorage.setItem('comfy-workspace-mode-v1', 'play');
       localStorage.setItem('comfy-workspace-mode-chosen-v1', '1');
       localStorage.removeItem('comfy-settings-cache-v1');
+      localStorage.removeItem('comfy-prompt-characters-v1');
+      localStorage.removeItem('play-campaign-v1');
     } catch {
       // ignore
     }
@@ -869,13 +871,10 @@ test('play campaign empty cast offers Open Cast CTA', async ({ page }) => {
   await gotoStable(page, '/play');
   await dismissBlockingOverlays(page);
   await expect(page.getByTestId('play-campaign')).toBeVisible({ timeout: 30_000 });
-  const create = page.getByTestId('play-campaign-create-character');
-  if (await create.isVisible().catch(() => false)) {
-    await expect(create.getByRole('link', { name: /Open Cast/i })).toBeVisible();
-  } else {
-    // Character already selected from prior storage — Cast picker still present.
-    await expect(page.getByTestId('play-campaign-character')).toBeVisible();
-  }
+  await expect(page.getByTestId('play-campaign-create-character')).toBeVisible();
+  await expect(page.getByTestId('play-campaign-create-name')).toBeVisible();
+  await expect(page.getByTestId('play-campaign-create-continue')).toBeVisible();
+  await expect(page.getByRole('link', { name: /Browse Cast/i })).toBeVisible();
 });
 
 test('dashboard elevates Open Play campaign as primary studio path', async ({ page }) => {
