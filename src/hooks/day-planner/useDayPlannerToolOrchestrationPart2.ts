@@ -130,9 +130,8 @@ export function useDayPlannerToolOrchestrationPart2(ctx: DayPlannerToolOrchestra
     setBusy(true);
     setError(null);
     try {
-      for (const slot of slots) {
-        await queueSlot(slot, { manageBusy: false });
-      }
+      // Parallel submit — each slot updates stillsRef synchronously after await.
+      await Promise.all(slots.map(slot => queueSlot(slot, { manageBusy: false })));
     } finally {
       setBusy(false);
     }
@@ -193,14 +192,14 @@ export function useDayPlannerToolOrchestrationPart2(ctx: DayPlannerToolOrchestra
           characterId: shared.activeCharacterId,
           lookId: shared.activeLookId ?? character?.activeLookId,
         });
-        updateToolSettings({
-          stills: upsertDaySlotStill(stillsRef.current, {
-            slotId: slot.id,
-            clipPromptId: typeof promptId === 'string' ? promptId : undefined,
-            clipStatus: promptId ? 'queued' : 'error',
-            clipUrl: undefined,
-          }),
+        const nextStills = upsertDaySlotStill(stillsRef.current, {
+          slotId: slot.id,
+          clipPromptId: typeof promptId === 'string' ? promptId : undefined,
+          clipStatus: promptId ? 'queued' : 'error',
+          clipUrl: undefined,
         });
+        stillsRef.current = nextStills;
+        updateToolSettings({ stills: nextStills });
         if (promptId) {
           setFilmStatus(
             `Queued ${slot.label.toLowerCase()} clip — motion reel prefers clips when ready.`
@@ -208,12 +207,12 @@ export function useDayPlannerToolOrchestrationPart2(ctx: DayPlannerToolOrchestra
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not queue that clip.');
-        updateToolSettings({
-          stills: upsertDaySlotStill(stillsRef.current, {
-            slotId: slot.id,
-            clipStatus: 'error',
-          }),
+        const nextStills = upsertDaySlotStill(stillsRef.current, {
+          slotId: slot.id,
+          clipStatus: 'error',
         });
+        stillsRef.current = nextStills;
+        updateToolSettings({ stills: nextStills });
       } finally {
         if (manageBusy) {
           setBusy(false);
@@ -234,13 +233,11 @@ export function useDayPlannerToolOrchestrationPart2(ctx: DayPlannerToolOrchestra
     setBusy(true);
     setError(null);
     try {
-      for (const slot of slots) {
+      const pending = slots.filter(slot => {
         const still = stillsRef.current.find(entry => entry.slotId === slot.id);
-        if (still?.status !== 'completed' || still.clipStatus === 'completed') {
-          continue;
-        }
-        await animateSlot(slot, { manageBusy: false });
-      }
+        return still?.status === 'completed' && still.clipStatus !== 'completed';
+      });
+      await Promise.all(pending.map(slot => animateSlot(slot, { manageBusy: false })));
     } finally {
       setBusy(false);
     }
@@ -296,7 +293,7 @@ export function useDayPlannerToolOrchestrationPart2(ctx: DayPlannerToolOrchestra
         }
       );
       if (character) {
-        completePlayCampaign({ characterId: character.id });
+        completePlayCampaign({ characterId: character.id, stepId: 'day' });
       }
     } catch (err) {
       const playbook = resolveFilmFailurePlaybook(

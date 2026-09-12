@@ -106,7 +106,7 @@ describe('play campaign helpers', () => {
     assert.equal(loadPlayCampaignState()?.lookPackId, 'lp-resume');
   });
 
-  it('completePlayCampaign sets roleplay step and completedAt', () => {
+  it('completePlayCampaign lands on Day by default (Roleplay optional)', () => {
     const storage = new Map<string, string>();
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -127,10 +127,13 @@ describe('play campaign helpers', () => {
     resetBrowserStorageCache();
 
     bumpPlayCampaignStep({ characterId: 'char-z', stepId: 'day' });
-    const done = completePlayCampaign({ characterId: 'char-z' });
-    assert.equal(done?.stepIndex, 4);
+    const done = completePlayCampaign({ characterId: 'char-z', stepId: 'day' });
+    assert.equal(done?.stepIndex, 3);
     assert.ok(typeof done?.completedAt === 'number' && done.completedAt > 0);
     assert.equal(loadPlayCampaignState()?.completedAt, done?.completedAt);
     assert.equal(completePlayCampaign({ characterId: 'other' }), null);
+
+    const fromRoleplay = completePlayCampaign({ characterId: 'char-z', stepId: 'roleplay' });
+    assert.equal(fromRoleplay?.stepIndex, 4);
   });
 });

@@ -52,17 +52,17 @@ Deep links: `/fitting?character=<id>&wardrobe=<kit>`.
 
 Four slots (Morning → Night) with wardrobe, setting, and beat per slot.
 
-- Queue stills per slot or **Queue all**.
-- **Animate slot / Animate all** — I2V from completed stills.
-- **Day reel** preview — clips preferred over stills.
-- **Cut film** — browser MediaRecorder assembly (same path as Roleplay).
-- After cut: **Open on Cast** (`?media=films`), **Open in Gallery** (`derivedKind=film`), **Campaign complete**.
+- Queue stills per slot or **Queue all** (Play/Simple queues draft stills in parallel for a faster first film).
+- **Animate slot / Animate all** — I2V from completed stills (stays Final quality).
+- **Day reel** preview — clips preferred over stills; stills alone are enough to Cut.
+- **Cut film** — server ffmpeg assemble when available, browser MediaRecorder fallback.
+- After cut: **Watch / Save on Cast**, **Open in Gallery**, **Back to Play**. Roleplay is optional.
 
 Deep links: `/day?character=<id>&wardrobe=<kit>` · Moodboard handoff: `?from=look`.
 
 ### 5. Roleplay (`/roleplay`)
 
-Optional alternate ending: story beats, stills + clips, **Cut film**, Save to Cast.
+**Optional** alternate ending: story beats, stills + clips, **Cut film**, Save to Cast. A Day cut already completes the campaign.
 
 - **Play as** From bio or From photo (edit/img2img + identity lock).
 - Fal **extend-video** when parent is on Fal CDN; else last-frame I2V.

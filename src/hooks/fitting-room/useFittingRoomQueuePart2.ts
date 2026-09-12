@@ -172,11 +172,13 @@ export function useFittingRoomQueuePart2(input: FittingRoomQueueInput, core: Fit
     setPreviewStatus('Queueing draft kit previews…');
     try {
       const batch = needed.slice(0, slots);
-      for (const wardrobeId of batch) {
-        const kit = input.swipeDeck.find(entry => entry.id === wardrobeId);
-        const label = kit?.label || getCachedClothingLabel(wardrobeId) || wardrobeId;
-        await queueKitPreview(wardrobeId, label);
-      }
+      await Promise.all(
+        batch.map(wardrobeId => {
+          const kit = input.swipeDeck.find(entry => entry.id === wardrobeId);
+          const label = kit?.label || getCachedClothingLabel(wardrobeId) || wardrobeId;
+          return queueKitPreview(wardrobeId, label);
+        })
+      );
       const remaining = fittingKitsNeedingPreview(
         input.swipeDeck,
         kitPreviewsRef.current,

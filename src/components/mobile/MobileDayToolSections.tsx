@@ -285,7 +285,7 @@ export default function MobileDayToolSections(vm: ViewModel) {
         {character && filmStatus && !assemblingFilm ? (
           <Link
             href={`/characters/${encodeURIComponent(character.id)}?media=films`}
-            className="ui-btn-ghost w-full justify-center text-center text-sm"
+            className="ui-btn-primary w-full justify-center text-center text-sm"
             data-testid="day-open-cast-film"
             onClick={() => {
               void import('@/lib/onboarding-hooks').then(({ markOnboardingWatchFirstFilm }) => {
@@ -293,16 +293,16 @@ export default function MobileDayToolSections(vm: ViewModel) {
               });
             }}
           >
-            Open on Cast
+            Watch / Save on Cast
           </Link>
         ) : null}
         {character && filmStatus && !assemblingFilm ? (
           <Link
             href={`/play?character=${encodeURIComponent(character.id)}`}
-            className="ui-btn-secondary w-full justify-center text-center text-sm"
+            className="ui-btn-ghost w-full justify-center text-center text-sm"
             data-testid="day-campaign-complete"
           >
-            Campaign complete — Open Play
+            Back to Play
           </Link>
         ) : null}
         {filmStatus ? <p className="type-caption text-[var(--text-muted)]">{filmStatus}</p> : null}

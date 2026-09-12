@@ -4,6 +4,8 @@
  */
 
 import { readBrowserValue, writeBrowserValue } from './browser-storage';
+import type { LookPack } from './look-pack';
+import { lookPackDayHref, lookPackFittingHref, lookPackRoleplayHref } from './look-pack';
 
 export const PLAY_METRICS_KEY = 'comfy-play-metrics-v1';
 
@@ -119,19 +121,39 @@ const PLAY_FUNNEL_STEP_LABELS: Record<PlayFunnelStepId, string> = {
 };
 
 /** Deep-link for a Play funnel step chip or stall CTA. */
-export function resolvePlayFunnelStepHref(stepId: PlayFunnelStepId, characterId?: string): string {
-  const id = characterId?.trim() || '';
+export function resolvePlayFunnelStepHref(
+  stepId: PlayFunnelStepId,
+  characterId?: string,
+  pack?: LookPack | null
+): string {
+  const id = characterId?.trim() || pack?.characterId?.trim() || '';
+  const staged =
+    pack &&
+    ({
+      ...pack,
+      characterId: id || pack.characterId,
+    } satisfies LookPack);
+
   switch (stepId) {
     case 'character':
       return id ? `/characters/${encodeURIComponent(id)}` : '/characters';
     case 'moodboard':
       return id ? `/moodboard?character=${encodeURIComponent(id)}` : '/moodboard';
     case 'fitting':
+      if (staged) {
+        return lookPackFittingHref(staged);
+      }
       return id ? `/fitting?character=${encodeURIComponent(id)}` : '/fitting';
     case 'day':
     case 'cut':
+      if (staged) {
+        return lookPackDayHref(staged);
+      }
       return id ? `/day?character=${encodeURIComponent(id)}` : '/day';
     case 'roleplay':
+      if (staged) {
+        return lookPackRoleplayHref(staged);
+      }
       return id ? `/roleplay?character=${encodeURIComponent(id)}` : '/roleplay';
     default:
       return '/play';
@@ -162,6 +184,8 @@ export function resolveNextPlayAction(input: {
   funnel?: FunnelLike | null;
   campaign?: CampaignLike;
   watchedFirstFilm?: boolean;
+  /** Session look pack when available — enriches Fitting/Day resume deep-links. */
+  lookPack?: LookPack | null;
 }): PlayNextAction {
   const funnel = input.funnel ?? {};
   const campaign = input.campaign ?? null;
@@ -171,6 +195,10 @@ export function resolveNextPlayAction(input: {
   const saves = funnel.saveToCast || 0;
   const watched = input.watchedFirstFilm === true;
   const characterId = campaign?.characterId?.trim() || '';
+  const pack =
+    input.lookPack && characterId
+      ? { ...input.lookPack, characterId: input.lookPack.characterId || characterId }
+      : input.lookPack;
 
   if (campaign?.completedAt && cuts > 0 && saves === 0 && characterId) {
     return {
@@ -190,7 +218,7 @@ export function resolveNextPlayAction(input: {
     }
     return {
       label: 'Cut another Day film',
-      href: `/day?character=${encodeURIComponent(characterId)}`,
+      href: resolvePlayFunnelStepHref('day', characterId, pack),
       reason: 'Loop closed — cut another Day film or start a new campaign from Play.',
     };
   }
@@ -204,11 +232,11 @@ export function resolveNextPlayAction(input: {
       moodboard: 'Continue Moodboard',
       fitting: 'Continue Fitting',
       day: 'Continue Day · Cut film',
-      roleplay: 'Continue Roleplay · Cut film',
+      roleplay: 'Optional Roleplay · or Cut in Day',
     };
     return {
       label: labels[id],
-      href: resolvePlayFunnelStepHref(id, characterId),
+      href: resolvePlayFunnelStepHref(id, characterId, pack),
       reason: 'Resume your active Play campaign at the current step.',
     };
   }
@@ -216,28 +244,34 @@ export function resolveNextPlayAction(input: {
   if (starts > 0 && cuts === 0) {
     return {
       label: 'Cut film in Day',
-      href: '/day',
-      reason: 'Campaign started — Cut film in Day or Roleplay to close the loop.',
+      href: resolvePlayFunnelStepHref('day', characterId || undefined, pack),
+      reason: 'Campaign started — Cut film in Day (Roleplay is optional).',
     };
   }
   if (keeps > 0 && cuts === 0) {
     return {
       label: 'Continue in Day',
-      href: '/day',
+      href: resolvePlayFunnelStepHref('day', characterId || undefined, pack),
       reason: 'Keepers saved — Continue in Day and Cut film.',
     };
   }
   if (cuts > 0 && saves === 0) {
     return {
       label: 'Open Cast films',
-      href: '/characters',
+      href: characterId
+        ? `/characters/${encodeURIComponent(characterId)}?media=films`
+        : '/characters',
       reason: 'Film cut — Save to Cast to stamp a studio copy.',
     };
   }
   if (cuts > 0 && saves > 0) {
     return {
       label: watched ? 'Cut another Day film' : 'Watch film on Cast',
-      href: watched ? '/day' : '/characters',
+      href: watched
+        ? resolvePlayFunnelStepHref('day', characterId || undefined, pack)
+        : characterId
+          ? `/characters/${encodeURIComponent(characterId)}?media=films`
+          : '/characters',
       reason: watched
         ? 'Habit loop — queue another Day reel or open Play for a new campaign.'
         : 'Film saved — open Cast to watch, then cut another.',
@@ -285,7 +319,7 @@ export function resolvePlayFunnelStall(input: {
     return {
       stepId: 'cut',
       stepLabel: PLAY_FUNNEL_STEP_LABELS.cut,
-      reason: 'Try-ons saved — Cut film in Day or Roleplay to close the loop.',
+      reason: 'Try-ons saved — Cut film in Day to close the loop (Roleplay is optional).',
       daysSinceCampaignStart,
     };
   }
@@ -297,7 +331,7 @@ export function resolvePlayFunnelStall(input: {
     moodboard: 'Extract a look pack on Moodboard, then continue to Fitting.',
     fitting: 'Queue try-ons in Fitting and Keep a plate before Day.',
     day: 'Plan Day slots and queue stills before Cut film.',
-    roleplay: 'Run a Roleplay beat, then Cut film.',
+    roleplay: 'Optional — cut in Day instead, or run a Roleplay beat then Cut film.',
   };
 
   return {

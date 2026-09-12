@@ -334,7 +334,10 @@ export function useDayPlannerToolOrchestrationCore() {
       actions.resetStatuses();
       try {
         const prompt = buildSlotPrompt(slot);
-        const finalized = await actions.finalizePrompt(prompt, character?.name || slot.label);
+        // Play/Simple: skip lint round-trip — Day stills are draft-speed first film.
+        const finalized = leanChrome
+          ? prompt
+          : await actions.finalizePrompt(prompt, character?.name || slot.label);
         setOutput(finalized);
         rememberDraftFields({
           toolKey: TOOL_ID,
@@ -357,23 +360,25 @@ export function useDayPlannerToolOrchestrationCore() {
           ...(queueOptions ?? {}),
           characterId: shared.activeCharacterId,
           lookId: shared.activeLookId ?? character?.activeLookId,
+          // Play/Simple first-film path: draft stills; I2V animate stays Final.
+          ...(leanChrome ? { qualityProfile: 'draft' as const } : {}),
         });
-        updateToolSettings({
-          stills: upsertDaySlotStill(stillsRef.current, {
-            slotId: slot.id,
-            promptId: typeof promptId === 'string' ? promptId : undefined,
-            status: promptId ? 'queued' : 'error',
-            imageUrl: undefined,
-          }),
+        const nextStills = upsertDaySlotStill(stillsRef.current, {
+          slotId: slot.id,
+          promptId: typeof promptId === 'string' ? promptId : undefined,
+          status: promptId ? 'queued' : 'error',
+          imageUrl: undefined,
         });
+        stillsRef.current = nextStills;
+        updateToolSettings({ stills: nextStills });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not queue that slot.');
-        updateToolSettings({
-          stills: upsertDaySlotStill(stillsRef.current, {
-            slotId: slot.id,
-            status: 'error',
-          }),
+        const nextStills = upsertDaySlotStill(stillsRef.current, {
+          slotId: slot.id,
+          status: 'error',
         });
+        stillsRef.current = nextStills;
+        updateToolSettings({ stills: nextStills });
       } finally {
         if (manageBusy) {
           setBusy(false);
@@ -385,6 +390,7 @@ export function useDayPlannerToolOrchestrationCore() {
       buildSlotPrompt,
       character,
       hasPlate,
+      leanChrome,
       plate,
       shared.activeCharacterId,
       shared.activeLookId,

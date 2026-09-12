@@ -110,7 +110,7 @@ export function useRoleplayFilmActions(input: {
         }
       );
       if (character) {
-        completePlayCampaign({ characterId: character.id });
+        completePlayCampaign({ characterId: character.id, stepId: 'roleplay' });
       }
     } catch (err) {
       const playbook = resolveFilmFailurePlaybook(

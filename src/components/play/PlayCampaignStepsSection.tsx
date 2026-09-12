@@ -40,7 +40,14 @@ export default function PlayCampaignStepsSection({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="type-overline mb-1 text-[var(--text-muted)]">Step {index + 1}</p>
-                  <p className="type-heading">{step.label}</p>
+                  <p className="type-heading">
+                    {step.label}
+                    {step.id === 'roleplay' ? (
+                      <span className="type-caption ml-2 font-normal text-[var(--text-muted)]">
+                        optional
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="type-caption text-[var(--text-muted)]">{step.description}</p>
                 </div>
                 <Button

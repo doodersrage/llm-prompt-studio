@@ -363,7 +363,7 @@ export default function DayPlannerToolSections({ description, ...vm }: Props) {
             <ButtonLink
               href={`/characters/${encodeURIComponent(character.id)}?media=films`}
               size="sm"
-              variant="ghost"
+              variant="primary"
               data-testid="day-open-cast-film"
               onClick={() => {
                 void import('@/lib/onboarding-hooks').then(({ markOnboardingWatchFirstFilm }) => {
@@ -371,7 +371,7 @@ export default function DayPlannerToolSections({ description, ...vm }: Props) {
                 });
               }}
             >
-              Open on Cast
+              Watch / Save on Cast
             </ButtonLink>
           ) : null}
           {character && completedShotCount > 0 ? (
@@ -392,10 +392,10 @@ export default function DayPlannerToolSections({ description, ...vm }: Props) {
             <ButtonLink
               href={`/play?character=${encodeURIComponent(character.id)}`}
               size="sm"
-              variant="secondary"
+              variant="ghost"
               data-testid="day-campaign-complete"
             >
-              Campaign complete — Open Play
+              Back to Play
             </ButtonLink>
           ) : null}
         </ToolActionRow>
@@ -423,8 +423,8 @@ export default function DayPlannerToolSections({ description, ...vm }: Props) {
             </ButtonLink>
           </>
         ) : null}
-        <Button size="sm" variant="secondary" disabled={busy} onClick={goRoleplay}>
-          Continue in Roleplay
+        <Button size="sm" variant="ghost" disabled={busy} onClick={goRoleplay}>
+          Optional: Roleplay
         </Button>
       </ToolActionRow>
       {error ? (

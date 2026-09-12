@@ -10,6 +10,7 @@ import {
   type LocalObservabilityCounters,
 } from '@/lib/local-observability';
 import { loadPlayCampaignState, PLAY_CAMPAIGN_STEPS } from '@/lib/play-campaign';
+import { loadLookPack } from '@/lib/look-pack';
 import { loadOnboardingState } from '@/lib/onboarding-store';
 import {
   daysFromCampaignStartToFirstFilmCut,
@@ -21,6 +22,7 @@ import {
   resolvePlayFunnelStepHref,
   type PlayMetrics,
 } from '@/lib/play-metrics';
+import type { LookPack } from '@/lib/look-pack';
 
 function formatDays(days: number): string {
   if (days < 1) {
@@ -50,6 +52,7 @@ export default function PlayFilmMetricsCard() {
   } | null>(null);
 
   const [watchedFirstFilm, setWatchedFirstFilm] = useState(false);
+  const [lookPack, setLookPack] = useState<LookPack | null>(null);
 
   useEffect(() => {
     const refresh = () => {
@@ -57,6 +60,7 @@ export default function PlayFilmMetricsCard() {
         setMetrics(loadPlayMetrics());
         setFunnel(loadLocalObservability());
         setCampaignStep(loadPlayCampaignState());
+        setLookPack(loadLookPack());
         setWatchedFirstFilm(
           loadOnboardingState().some(step => step.id === 'watch-first-film' && step.done)
         );
@@ -89,6 +93,7 @@ export default function PlayFilmMetricsCard() {
     funnel,
     campaign: campaignStep,
     watchedFirstFilm,
+    lookPack,
   });
   const stall = resolvePlayFunnelStall({
     metrics,
@@ -97,6 +102,10 @@ export default function PlayFilmMetricsCard() {
   });
 
   const characterId = campaignStep?.characterId?.trim() || '';
+  const packForLinks =
+    lookPack && characterId
+      ? { ...lookPack, characterId: lookPack.characterId || characterId }
+      : lookPack;
 
   const currentIndex = Math.max(
     campaignStep?.stepIndex ?? -1,
@@ -177,10 +186,11 @@ export default function PlayFilmMetricsCard() {
           const label = `${index + 1}. ${step.label}`;
           const stepHref =
             characterId && step.href
-              ? step.href({ characterId })
+              ? step.href({ characterId, pack: packForLinks })
               : resolvePlayFunnelStepHref(
                   isStallStep && stall!.stepId === 'cut' ? 'cut' : step.id,
-                  characterId || undefined
+                  characterId || undefined,
+                  packForLinks
                 );
 
           return (
@@ -223,7 +233,7 @@ export default function PlayFilmMetricsCard() {
             . {stall.reason}
           </p>
           <ButtonLink
-            href={resolvePlayFunnelStepHref(stall.stepId, characterId || undefined)}
+            href={resolvePlayFunnelStepHref(stall.stepId, characterId || undefined, packForLinks)}
             size="sm"
             variant="primary"
             data-testid="play-stall-cta"

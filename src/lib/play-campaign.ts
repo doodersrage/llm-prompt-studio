@@ -51,7 +51,7 @@ export const PLAY_CAMPAIGN_STEPS: PlayCampaignStep[] = [
   {
     id: 'roleplay',
     label: 'Roleplay',
-    description: 'Continue the story with beats, clips, and Save to Cast.',
+    description: 'Optional — alternate ending with beats and clips, or skip after a Day cut.',
     href: ({ characterId, pack }) =>
       pack ? lookPackRoleplayHref(pack) : `/roleplay?character=${encodeURIComponent(characterId)}`,
   },
@@ -250,6 +250,8 @@ export function bumpPlayCampaignStep(input: {
 export function completePlayCampaign(input: {
   characterId: string;
   lookPackId?: string;
+  /** Step that closed the loop — Day cut stays on Day; Roleplay cut lands on Roleplay. */
+  stepId?: PlayCampaignStepId;
 }): PlayCampaignState | null {
   const characterId = input.characterId.trim();
   if (!characterId) {
@@ -259,12 +261,19 @@ export function completePlayCampaign(input: {
   if (saved && saved.characterId !== characterId) {
     return null;
   }
-  const roleplayIndex = PLAY_CAMPAIGN_STEPS.findIndex(entry => entry.id === 'roleplay');
+  const preferredId = input.stepId === 'roleplay' ? 'roleplay' : 'day';
+  const preferredIndex = PLAY_CAMPAIGN_STEPS.findIndex(entry => entry.id === preferredId);
+  const dayIndex = PLAY_CAMPAIGN_STEPS.findIndex(entry => entry.id === 'day');
   const next: PlayCampaignState = {
     version: 1,
     characterId,
     lookPackId: input.lookPackId?.trim() || saved?.lookPackId,
-    stepIndex: roleplayIndex >= 0 ? roleplayIndex : PLAY_CAMPAIGN_STEPS.length - 1,
+    stepIndex:
+      preferredIndex >= 0
+        ? preferredIndex
+        : dayIndex >= 0
+          ? dayIndex
+          : PLAY_CAMPAIGN_STEPS.length - 1,
     completedAt: Date.now(),
     updatedAt: Date.now(),
   };

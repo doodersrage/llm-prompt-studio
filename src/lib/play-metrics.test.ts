@@ -91,13 +91,40 @@ describe('play-metrics', () => {
     assert.equal(moodboardStall?.stepId, 'moodboard');
   });
 
-  it('resolves funnel step hrefs with optional character id', () => {
+  it('resolves funnel step hrefs with optional character id and look pack', () => {
     assert.equal(resolvePlayFunnelStepHref('day'), '/day');
     assert.equal(resolvePlayFunnelStepHref('day', 'c1'), '/day?character=c1');
     assert.equal(resolvePlayFunnelStepHref('cut', 'c1'), '/day?character=c1');
     assert.equal(resolvePlayFunnelStepHref('fitting', 'c1'), '/fitting?character=c1');
     assert.equal(resolvePlayFunnelStepHref('character'), '/characters');
     assert.equal(resolvePlayFunnelStepHref('moodboard', 'c1'), '/moodboard?character=c1');
+    const withPack = resolvePlayFunnelStepHref('fitting', 'c1', {
+      version: 1,
+      source: 'moodboard',
+      characterId: 'c1',
+      wardrobeId: 'kit-linen',
+      vibePrompt: 'soft morning light',
+      savedAt: 1,
+    });
+    assert.match(withPack, /from=look/);
+    assert.match(withPack, /wardrobe=kit-linen/);
+    assert.match(withPack, /character=c1/);
+  });
+
+  it('resume CTAs carry look pack when staged', () => {
+    const resume = resolveNextPlayAction({
+      campaign: { characterId: 'c1', stepIndex: 2 },
+      lookPack: {
+        version: 1,
+        source: 'moodboard',
+        characterId: 'c1',
+        wardrobeId: 'kit-a',
+        vibePrompt: 'vibe',
+        savedAt: 1,
+      },
+    });
+    assert.match(resume.href, /from=look/);
+    assert.match(resume.href, /wardrobe=kit-a/);
   });
 
   it('aligns stall CTA href with stall step (not bare next-action fallback)', () => {

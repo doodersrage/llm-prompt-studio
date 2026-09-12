@@ -222,8 +222,37 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
     toolSettings.instruction,
   ]);
 
+  /** Prefer a staged session pack on handoff so Fitting/Day skip a second vision pass. */
+  const ensureLookPackForHandoff = useCallback(async () => {
+    const characterId = (character?.id ?? shared.activeCharacterId)?.trim() || undefined;
+    const staged = loadLookPack();
+    const reusable =
+      staged &&
+      Boolean(
+        staged.vibePrompt?.trim() || staged.instruction?.trim() || staged.moodNotes?.trim()
+      ) &&
+      (!characterId || !staged.characterId || staged.characterId === characterId);
+    if (reusable && staged) {
+      const next = {
+        ...staged,
+        characterId: characterId || staged.characterId,
+        wardrobeId: shared.lockedWardrobeId?.trim() || staged.wardrobeId,
+      };
+      saveLookPack(next);
+      setLookStatus('Using staged look pack — skipped re-reading tiles.');
+      return next;
+    }
+    return extractLookPack();
+  }, [
+    character?.id,
+    extractLookPack,
+    setLookStatus,
+    shared.activeCharacterId,
+    shared.lockedWardrobeId,
+  ]);
+
   const sendLookToFitting = useCallback(async () => {
-    const pack = await extractLookPack();
+    const pack = await ensureLookPackForHandoff();
     if (!pack) {
       return;
     }
@@ -232,10 +261,10 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
       bumpPlayCampaignStep({ characterId: pack.characterId, stepId: 'fitting' });
     }
     router.push(lookPackFittingHref(pack));
-  }, [extractLookPack, router]);
+  }, [ensureLookPackForHandoff, router]);
 
   const sendLookToDay = useCallback(async () => {
-    const pack = await extractLookPack();
+    const pack = await ensureLookPackForHandoff();
     if (!pack) {
       return;
     }
@@ -244,10 +273,10 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
       bumpPlayCampaignStep({ characterId: pack.characterId, stepId: 'day' });
     }
     router.push(lookPackDayHref(pack));
-  }, [extractLookPack, router]);
+  }, [ensureLookPackForHandoff, router]);
 
   const sendLookToRoleplay = useCallback(async () => {
-    const pack = await extractLookPack();
+    const pack = await ensureLookPackForHandoff();
     if (!pack) {
       return;
     }
@@ -255,10 +284,10 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
       bumpPlayCampaignStep({ characterId: pack.characterId, stepId: 'roleplay' });
     }
     router.push(lookPackRoleplayHref(pack));
-  }, [extractLookPack, router]);
+  }, [ensureLookPackForHandoff, router]);
 
   const saveLookPackToCast = useCallback(async () => {
-    const pack = await extractLookPack();
+    const pack = await ensureLookPackForHandoff();
     if (!pack || !character) {
       if (!character) {
         setError('Pick a Cast character before saving a look pack.');
@@ -273,7 +302,7 @@ export function useMoodboardToolOrchestrationPart2(ctx: MoodboardToolOrchestrati
     addCharacterLookPack(character.id, name, pack);
     setLookStatus(`Saved "${name}" on ${character.name}.`);
     markOnboardingFirstPlayCampaign();
-  }, [character, extractLookPack, setError, setLookStatus]);
+  }, [character, ensureLookPackForHandoff, setError, setLookStatus]);
 
   const goRoleplay = useCallback(() => {
     if (character) {
